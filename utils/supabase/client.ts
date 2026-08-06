@@ -64,7 +64,7 @@ export function isSupabaseConfigured(): boolean {
     const host = parsed.hostname;
     if (!host) return false;
     if (host === "localhost" || host === "127.0.0.1") return true;
-    if (host.includes("your-project") || host.includes("iryyhighhwwmtpzqmjak")) return false;
+    if (host.includes("your-project")) return false;
     return host.includes(".");
   } catch {
     return false;
