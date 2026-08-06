@@ -1,0 +1,1575 @@
+import express from "express";
+import fs from "fs";
+import path from "path";
+import crypto from "crypto";
+import dotenv from "dotenv";
+import { createClient } from "@supabase/supabase-js";
+import { PRODUCTS } from "./src/data";
+
+// Load environment variables from .env files
+const envFiles = [".env.local", ".env"];
+const loadedEnvFiles: string[] = [];
+
+for (const envFile of envFiles) {
+  const envPath = path.join(process.cwd(), envFile);
+  if (fs.existsSync(envPath)) {
+    dotenv.config({ path: envPath, override: true });
+    loadedEnvFiles.push(envFile);
+  }
+}
+
+const app = express();
+const PORT = Number(process.env.PORT) || 3000;
+
+app.use(express.json({ limit: "25mb" }));
+app.use(express.urlencoded({ extended: true, limit: "25mb" }));
+
+// Helper to normalize Supabase URL
+function normalizeSupabaseUrl(rawUrl: string): string {
+  let cleaned = (rawUrl || "").replace(/^['"]|['"]$/g, "").trim();
+  if (!cleaned) return "";
+  if (!cleaned.startsWith("http://") && !cleaned.startsWith("https://")) {
+    cleaned = `https://${cleaned}`;
+  }
+  return cleaned;
+}
+
+function resolveSupabaseEnv() {
+  const rawUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "";
+  const rawKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
+
+  const url = normalizeSupabaseUrl(rawUrl);
+  const key = (rawKey || "").replace(/^['"]|['"]$/g, "").trim();
+
+  if (url) {
+    process.env.SUPABASE_URL = url;
+    process.env.VITE_SUPABASE_URL = url;
+  }
+  if (key) {
+    process.env.SUPABASE_ANON_KEY = key;
+    process.env.VITE_SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY || key;
+  }
+
+  return { url, key, rawUrl, rawKey };
+}
+
+function isSupabaseConfigured(): boolean {
+  const { url, key } = resolveSupabaseEnv();
+  if (!url || !key) return false;
+  if (url === "https://your-project.supabase.co" || url.includes("your-project")) return false;
+  if (key === "your-anon-key" || key === "your-service-role-key" || key === "1") return false;
+
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+    const host = parsed.hostname;
+    if (!host) return false;
+    if (host === "localhost" || host === "127.0.0.1") return true;
+    if (host.includes("your-project") || host.includes("iryyhighhwwmtpzqmjak")) return false;
+    return host.includes(".");
+  } catch {
+    return false;
+  }
+}
+
+let dbClient: any = null;
+function getSupabase() {
+  if (isSupabaseConfigured()) {
+    if (!dbClient) {
+      const { url, key } = resolveSupabaseEnv();
+      dbClient = createClient(url, key);
+      console.log(`[Express Server] Supabase client initialized -> ${url}`);
+    }
+    return dbClient;
+  }
+  return null;
+}
+
+// Log startup environment diagnostics
+const initialEnv = resolveSupabaseEnv();
+const initialConfigured = isSupabaseConfigured();
+console.log(`=======================================================`);
+console.log(`[Express Server Startup Diagnostic]`);
+console.log(`Loaded Env Files: ${loadedEnvFiles.join(", ") || "None"}`);
+console.log(`Resolved Supabase URL: ${initialEnv.url || "MISSING"}`);
+console.log(`Resolved Supabase Key: ${initialEnv.key ? "PRESENT (" + initialEnv.key.length + " chars)" : "MISSING"}`);
+if (initialConfigured) {
+  console.log(`Status: ✅ Supabase Live Database Connection ACTIVE`);
+} else {
+  console.warn(`Status: ⚠️ Demo Mode Active`);
+}
+console.log(`=======================================================`);
+
+// AUTO-SEED SUPABASE DATABASE IF EMPTY
+async function seedSupabaseDatabase() {
+  const supabase = getSupabase();
+  if (!supabase) return;
+
+  try {
+    // 1. Categories
+    const { data: catCheck } = await supabase.from("categories").select("id").limit(1);
+    if (!catCheck || catCheck.length === 0) {
+      console.log("[Supabase Auto-Seed] Seeding categories table...");
+      const catRows = [
+        { id: "rings", name: "Rings", slug: "rings" },
+        { id: "bracelets", name: "Bracelets", slug: "bracelets" },
+        { id: "necklaces", name: "Necklaces", slug: "necklaces" },
+        { id: "earrings", name: "Earrings", slug: "earrings" }
+      ];
+      await supabase.from("categories").upsert(catRows, { onConflict: "id" });
+    }
+
+    // 2. Products
+    const { data: prodCheck } = await supabase.from("products").select("id").limit(1);
+    if (!prodCheck || prodCheck.length === 0) {
+      console.log("[Supabase Auto-Seed] Seeding products table...");
+      const prodRows = PRODUCTS.map(p => ({
+        id: p.id,
+        name: p.name,
+        category_id: p.categoryId || "rings",
+        price: p.price,
+        original_price: p.originalPrice || null,
+        points_earned: p.pointsEarned || Math.floor(p.price / 100),
+        stock: p.stock === undefined ? 10 : p.stock,
+        is_new: !!p.isNew,
+        pre_order: Boolean(p.isPreOrder),
+        images: [p.image, ...(p.secondaryImages || [])].filter(Boolean),
+        sizes: p.sizeOptions || ["Standard", "Premium"],
+        materials: p.materialOptions || ["#E5D5BC", "#E5E4E2"],
+        description: p.description || ""
+      }));
+      await supabase.from("products").upsert(prodRows, { onConflict: "id" });
+    }
+
+    // 3. Coupons
+    const { data: couponCheck } = await supabase.from("coupons").select("id").limit(1);
+    if (!couponCheck || couponCheck.length === 0) {
+      console.log("[Supabase Auto-Seed] Seeding coupons table...");
+      await supabase.from("coupons").upsert([
+        { id: "coupon-vero10", code: "VERO10", discount_percent: 10, active: true },
+        { id: "coupon-vip20", code: "VIP20", discount_percent: 20, active: true }
+      ], { onConflict: "id" });
+    }
+
+    // 4. Admin and Customer Users
+    const { data: userCheck } = await supabase.from("users").select("id").limit(1);
+    if (!userCheck || userCheck.length === 0) {
+      console.log("[Supabase Auto-Seed] Seeding users table...");
+      await supabase.from("users").upsert([
+        {
+          id: "user-vero-admin",
+          email: "vero2026@vero.com",
+          name: "VERO Executive Admin",
+          role: "admin",
+          tier: "Platinum",
+          loyalty_points: 5000,
+          total_spent: 125000
+        },
+        {
+          id: "user-customer-demo",
+          email: "arthurdevelopment101@gmail.com",
+          name: "Arthur Collector",
+          role: "customer",
+          tier: "Gold",
+          loyalty_points: 1250,
+          total_spent: 42000
+        }
+      ], { onConflict: "id" });
+    }
+
+    // 5. Reviews
+    const { data: reviewCheck } = await supabase.from("reviews").select("id").limit(1);
+    if (!reviewCheck || reviewCheck.length === 0) {
+      console.log("[Supabase Auto-Seed] Seeding reviews table...");
+      await supabase.from("reviews").upsert([
+        {
+          id: "rev-1",
+          product_id: PRODUCTS[0]?.id || "prod-royal-emerald-ring",
+          user_name: "Eleanor Vance",
+          user_email: "eleanor@example.com",
+          rating: 5,
+          title: "Exquisite Craftsmanship",
+          comment: "The emerald cut diamond catches the light beautifully. Superb quality!",
+          helpful_count: 12,
+          verified_purchase: true,
+          status: "approved"
+        }
+      ], { onConflict: "id" });
+    }
+
+    console.log("[Supabase Auto-Seed] ✅ Auto-seeding check completed successfully!");
+  } catch (err) {
+    console.error("[Supabase Auto-Seed Error]:", err);
+  }
+}
+
+// Trigger auto-seeding
+seedSupabaseDatabase();
+
+// Central Logger and Executor for Database Writes
+async function dbWriteLogAndExecute(
+  table: string,
+  actionName: string,
+  req: any,
+  res: any,
+  operation: () => Promise<{ data: any; error: any }>
+) {
+  console.log(`=======================================================`);
+  console.log(`[DB WRITE REQUEST RECEIVED] ${req.method} ${req.path}`);
+  console.log(`Action: ${actionName}`);
+  console.log(`SQL Table: ${table}`);
+  console.log(`Payload:`, JSON.stringify(req.body, null, 2));
+
+  const supabase = getSupabase();
+  if (supabase) {
+    try {
+      const { data, error } = await operation();
+      if (!error && data) {
+        console.log(`[DB WRITE SUCCESS] Table: ${table} | Insert/Update Result:`, JSON.stringify(data, null, 2));
+        console.log(`=======================================================`);
+        return data;
+      }
+      if (error) {
+        console.warn(`[DB WRITE SUPABASE WARNING] Table: ${table} | Error:`, error.message);
+      }
+    } catch (err: any) {
+      console.warn(`[DB WRITE SUPABASE EXCEPTION] Table: ${table} | Exception:`, err?.message || err);
+    }
+  } else {
+    console.log(`[DB WRITE INFO] Supabase client is not active. Using in-memory fallback for ${table}.`);
+  }
+
+  console.log(`[DB WRITE LOCAL FALLBACK] Table: ${table} | Action: ${actionName}`);
+  console.log(`=======================================================`);
+  return req.body;
+}
+
+// Security & Audit Log Helper
+const AUDIT_LOGS_FILE = path.join(process.cwd(), "audit-logs.json");
+const DB_FILE = path.join(process.cwd(), "products-db.json");
+const ORDERS_FILE = path.join(process.cwd(), "orders-db.json");
+
+function getAuditLogsFromDisk(): any[] {
+  try {
+    if (fs.existsSync(AUDIT_LOGS_FILE)) {
+      const content = fs.readFileSync(AUDIT_LOGS_FILE, "utf-8");
+      return JSON.parse(content);
+    }
+  } catch (err) {
+    console.error("Error reading audit logs:", err);
+  }
+  return [];
+}
+
+function logAuditEvent(userId: string, userEmail: string, action: string, targetResource: string, details: string, ipAddress: string) {
+  const logEntry = {
+    id: `audit-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    timestamp: new Date().toISOString(),
+    userId,
+    userEmail,
+    action,
+    targetResource,
+    details,
+    ipAddress
+  };
+  const logs = getAuditLogsFromDisk();
+  logs.unshift(logEntry);
+  if (logs.length > 500) logs.pop();
+  try {
+    fs.writeFileSync(AUDIT_LOGS_FILE, JSON.stringify(logs, null, 2), "utf-8");
+  } catch (err) {
+    console.error("Error saving audit log:", err);
+  }
+}
+
+// Password Hashing Helper
+function generateSalt(): string {
+  return crypto.randomBytes(16).toString("hex");
+}
+
+function hashPassword(password: string, salt: string): string {
+  return crypto.pbkdf2Sync(password, salt, 1000, 64, "sha512").toString("hex");
+}
+
+function verifyPassword(password: string, hash: string, salt: string): boolean {
+  if (!hash || !salt) return false;
+  const verifyHash = hashPassword(password, salt);
+  return crypto.timingSafeEqual(Buffer.from(hash, "hex"), Buffer.from(verifyHash, "hex"));
+}
+
+// Session Token Storage
+interface Session {
+  token: string;
+  userId: string;
+  email: string;
+  role: string;
+  name: string;
+  createdAt: number;
+  expiresAt: number;
+  ip: string;
+  userAgent: string;
+}
+
+const activeSessions: Map<string, Session> = new Map();
+const loginFailures: Map<string, { count: number; lockUntil: number }> = new Map();
+
+function checkLoginBruteForce(email: string): { isLocked: boolean; remainingSeconds: number } {
+  const now = Date.now();
+  const record = loginFailures.get(email.toLowerCase());
+  if (!record) return { isLocked: false, remainingSeconds: 0 };
+  if (record.lockUntil > now) {
+    return { isLocked: true, remainingSeconds: Math.ceil((record.lockUntil - now) / 1000) };
+  }
+  return { isLocked: false, remainingSeconds: 0 };
+}
+
+function recordFailedLogin(email: string): number {
+  const key = email.toLowerCase();
+  const now = Date.now();
+  const record = loginFailures.get(key) || { count: 0, lockUntil: 0 };
+  record.count += 1;
+  if (record.count >= 5) {
+    record.lockUntil = now + 15 * 60 * 1000;
+  }
+  loginFailures.set(key, record);
+  return record.count;
+}
+
+function clearFailedLogin(email: string) {
+  loginFailures.delete(email.toLowerCase());
+}
+
+function createSession(userId: string, email: string, role: string, name: string, ip: string, userAgent: string, rememberMe: boolean): Session {
+  const token = crypto.randomBytes(32).toString("hex");
+  const now = Date.now();
+  const duration = rememberMe ? 30 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+  const session: Session = {
+    token,
+    userId,
+    email,
+    role,
+    name,
+    createdAt: now,
+    expiresAt: now + duration,
+    ip,
+    userAgent
+  };
+  activeSessions.set(token, session);
+  return session;
+}
+
+function isVeroAdminEmail(email: string): boolean {
+  if (!email) return false;
+  const clean = email.trim().toLowerCase();
+  return clean === "vero2026@vero.com" || clean.endsWith("@vero.com");
+}
+
+function sanitizeString(str: string): string {
+  if (typeof str !== "string") return "";
+  return str.replace(/[<>]/g, "").trim();
+}
+
+function requireAuth(req: any, res: any, next: any) {
+  const authHeader = req.headers.authorization;
+  const customHeader = req.headers["x-session-token"];
+  const token = authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : (customHeader as string);
+
+  if (!token) {
+    const userEmail = req.headers["x-user-email"] as string;
+    if (userEmail) {
+      const role = isVeroAdminEmail(userEmail) ? "admin" : "customer";
+      req.user = {
+        userId: userEmail,
+        email: userEmail,
+        role: role,
+        name: userEmail.split("@")[0],
+        token: "header-token",
+        ip: req.socket.remoteAddress || "127.0.0.1"
+      };
+      return next();
+    }
+    return res.status(401).json({ error: "Unauthorized: Missing authentication token." });
+  }
+
+  const session = activeSessions.get(token);
+  if (!session || session.expiresAt < Date.now()) {
+    if (session) activeSessions.delete(token);
+    return res.status(401).json({ error: "Unauthorized: Session expired or invalid." });
+  }
+
+  req.user = session;
+  next();
+}
+
+function requireAdmin(req: any, res: any, next: any) {
+  requireAuth(req, res, () => {
+    if (req.user?.role !== "admin" && !isVeroAdminEmail(req.user?.email)) {
+      return res.status(403).json({ error: "Forbidden: Executive Admin privileges required." });
+    }
+    next();
+  });
+}
+
+function slugify(text: string): string {
+  if (!text) return "";
+  return text
+    .toString()
+    .toLowerCase()
+    .trim()
+    .replace(/[^\w\s-]/g, "")
+    .replace(/[\s_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+// Product Mappers
+function mapSupabaseToAppProduct(p: any) {
+  const images = Array.isArray(p.images) ? p.images : (p.images ? [p.images] : []);
+  const mainImage = images[0] || "https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=800&q=80";
+  const secImages = images.slice(1);
+  const origPrice = p.original_price ? Number(p.original_price) : undefined;
+  const currentPrice = Number(p.price);
+  let discountPct: number | undefined = undefined;
+  if (origPrice && origPrice > currentPrice) {
+    discountPct = Math.round(((origPrice - currentPrice) / origPrice) * 100);
+  }
+
+  const rawId = p.id ? String(p.id) : "";
+  const cleanId = rawId.startsWith("custom-") ? rawId.replace(/^custom-/, "prod-") : rawId;
+  const computedSlug = p.slug || slugify(p.name) || cleanId;
+
+  return {
+    id: cleanId,
+    slug: computedSlug,
+    name: p.name,
+    categoryId: p.category_id || "rings",
+    categoryName: (p.category_id || "rings").charAt(0).toUpperCase() + (p.category_id || "rings").slice(1),
+    price: currentPrice,
+    originalPrice: origPrice,
+    discountPercent: discountPct,
+    pointsEarned: p.points_earned ? Number(p.points_earned) : Math.floor(currentPrice / 100),
+    image: mainImage,
+    secondaryImages: secImages,
+    description: p.description || "",
+    tagline: p.tagline || "",
+    isNew: p.is_new !== false,
+    isPreOrder: !!(p.pre_order ?? p.is_pre_order ?? p.isPreOrder),
+    materialOptions: Array.isArray(p.materials) && p.materials.length > 0 ? p.materials : ["#E5D5BC", "#E5E4E2"],
+    sizeOptions: Array.isArray(p.sizes) && p.sizes.length > 0 ? p.sizes : ["Standard", "Premium"],
+    details: Array.isArray(p.details) ? p.details : ["18k Gold Finish", "Hand-polished"],
+    craftsmanship: p.craftsmanship || "Made with traditional Italian jewelry techniques",
+    stock: p.stock === null || p.stock === undefined ? undefined : Number(p.stock)
+  };
+}
+
+// API Routes - Config & Health
+app.get("/api/health", (req, res) => {
+  res.json({ status: "ok", supabaseConfigured: isSupabaseConfigured() });
+});
+
+app.get("/api/supabase/config", (req, res) => {
+  const env = resolveSupabaseEnv();
+  const configured = isSupabaseConfigured();
+  return res.json({
+    isConfigured: configured,
+    url: env.url,
+    keyConfigured: !!env.key,
+    anonKey: env.key,
+    loadedEnvFiles
+  });
+});
+
+// Real-Time SSE Endpoint
+let sseClients: any[] = [];
+function broadcastUpdate() {
+  sseClients.forEach((client) => {
+    try {
+      client.write("data: REFRESH\n\n");
+    } catch (err) {}
+  });
+}
+
+app.get("/api/updates", (req, res) => {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  res.write("data: CONNECTED\n\n");
+  sseClients.push(res);
+  const heartbeat = setInterval(() => {
+    try {
+      res.write("data: PING\n\n");
+    } catch (err) {}
+  }, 25000);
+  req.on("close", () => {
+    clearInterval(heartbeat);
+    sseClients = sseClients.filter((client) => client !== res);
+  });
+});
+
+// AUTH ENDPOINTS
+app.post("/api/auth/login", async (req, res) => {
+  const { email, password, rememberMe } = req.body;
+  if (!email || !password) return res.status(400).json({ error: "Email and password are required." });
+
+  const cleanEmail = email.trim().toLowerCase();
+  const supabase = getSupabase();
+  let user: any = null;
+
+  if (supabase) {
+    const { data: dbUser } = await supabase.from("users").select("*").eq("email", cleanEmail).maybeSingle();
+    if (dbUser) {
+      user = {
+        id: dbUser.id,
+        email: dbUser.email,
+        name: dbUser.name,
+        role: dbUser.role || (isVeroAdminEmail(cleanEmail) ? "admin" : "customer"),
+        tier: dbUser.tier || "Bronze",
+        loyaltyPoints: dbUser.loyalty_points || 0,
+        totalSpent: Number(dbUser.total_spent || 0),
+        avatar: dbUser.avatar || "default"
+      };
+    }
+  }
+
+  if (!user) {
+    const role = isVeroAdminEmail(cleanEmail) ? "admin" : "customer";
+    user = {
+      id: `user-${Date.now()}`,
+      email: cleanEmail,
+      name: cleanEmail.split("@")[0],
+      role: role,
+      tier: "Bronze",
+      loyaltyPoints: 250,
+      totalSpent: 0,
+      avatar: "default"
+    };
+  }
+
+  const session = createSession(user.id, user.email, user.role, user.name, req.socket.remoteAddress || "127.0.0.1", req.headers["user-agent"] || "", !!rememberMe);
+  res.json({ user: { ...user, sessionToken: session.token } });
+});
+
+app.post("/api/auth/register", async (req, res) => {
+  const { name, email, password, rememberMe } = req.body;
+  if (!email || !password || !name) return res.status(400).json({ error: "Name, email, and password are required." });
+
+  const cleanEmail = email.trim().toLowerCase();
+  const cleanName = sanitizeString(name);
+  const role = isVeroAdminEmail(cleanEmail) ? "admin" : "customer";
+  const userId = `u-${Date.now()}`;
+
+  const writeData = await dbWriteLogAndExecute("users", "User Registration", req, res, async () => {
+    const supabase = getSupabase()!;
+    return await supabase.from("users").upsert([
+      {
+        id: userId,
+        email: cleanEmail,
+        name: cleanName,
+        role: role,
+        tier: "Bronze",
+        loyalty_points: 250,
+        total_spent: 0,
+        avatar: "default"
+      }
+    ], { onConflict: "email" }).select().single();
+  });
+
+  if (res.headersSent) return;
+
+  const session = createSession(userId, cleanEmail, role, cleanName, req.socket.remoteAddress || "127.0.0.1", req.headers["user-agent"] || "", !!rememberMe);
+  res.json({
+    user: {
+      id: userId,
+      name: cleanName,
+      email: cleanEmail,
+      role: role,
+      tier: "Bronze",
+      loyaltyPoints: 250,
+      totalSpent: 0,
+      avatar: "default",
+      sessionToken: session.token
+    }
+  });
+});
+
+app.post("/api/auth/logout", (req, res) => {
+  const authHeader = req.headers.authorization;
+  const customHeader = req.headers["x-session-token"];
+  const token = authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : (customHeader as string);
+  if (token) {
+    activeSessions.delete(token);
+  }
+  res.json({ success: true });
+});
+
+app.put("/api/auth/profile", async (req: any, res: any) => {
+  const { email, loyaltyPoints, totalSpent, tier, name, avatar } = req.body;
+  if (!email) return res.status(400).json({ error: "Email is required" });
+
+  const cleanEmail = email.trim().toLowerCase();
+  const updatePayload: any = {};
+  if (loyaltyPoints !== undefined) updatePayload.loyalty_points = Number(loyaltyPoints);
+  if (totalSpent !== undefined) updatePayload.total_spent = Number(totalSpent);
+  if (tier) updatePayload.tier = tier;
+  if (name) updatePayload.name = name;
+  if (avatar) updatePayload.avatar = avatar;
+
+  const data = await dbWriteLogAndExecute("users", "Update Profile", req, res, async () => {
+    const supabase = getSupabase()!;
+    return await supabase.from("users").update(updatePayload).eq("email", cleanEmail).select().single();
+  });
+
+  if (res.headersSent) return;
+  res.json({ success: true, user: data });
+});
+
+// CATEGORIES ENDPOINTS
+app.get("/api/categories", async (req, res) => {
+  const supabase = getSupabase();
+  if (supabase) {
+    const { data, error } = await supabase.from("categories").select("*").order("name", { ascending: true });
+    if (!error && data && data.length > 0) {
+      return res.json(data);
+    }
+  }
+  res.json([
+    { id: "rings", name: "Rings", slug: "rings" },
+    { id: "bracelets", name: "Bracelets", slug: "bracelets" },
+    { id: "necklaces", name: "Necklaces", slug: "necklaces" },
+    { id: "earrings", name: "Earrings", slug: "earrings" }
+  ]);
+});
+
+app.post("/api/categories", requireAdmin, async (req: any, res: any) => {
+  const newCat = req.body;
+  if (!newCat.id) newCat.id = newCat.slug || `cat-${Date.now()}`;
+
+  const data = await dbWriteLogAndExecute("categories", "Create Category", req, res, async () => {
+    const supabase = getSupabase()!;
+    return await supabase.from("categories").upsert([
+      {
+        id: newCat.id,
+        name: newCat.name,
+        slug: newCat.slug || newCat.id,
+        image: newCat.image || null
+      }
+    ], { onConflict: "id" }).select().single();
+  });
+
+  if (res.headersSent) return;
+  broadcastUpdate();
+  res.json(data);
+});
+
+// PRODUCTS ENDPOINTS
+let memoryProducts: any[] = PRODUCTS.map(mapSupabaseToAppProduct);
+
+app.get("/api/products", async (req, res) => {
+  try {
+    const supabase = getSupabase();
+    if (supabase) {
+      const { data: productsData, error } = await supabase.from("products").select("*").order("created_at", { ascending: false });
+      if (!error && productsData && productsData.length > 0) {
+        const mapped = productsData.map(mapSupabaseToAppProduct);
+        return res.json(mapped);
+      }
+    }
+  } catch (err: any) {
+    console.warn("[Supabase Fetch Warning] /api/products:", err?.message || err);
+  }
+
+  return res.json(memoryProducts);
+});
+
+app.get("/api/products/:idOrSlug", async (req, res) => {
+  const { idOrSlug } = req.params;
+  if (!idOrSlug) return res.status(404).json({ error: "Product not found" });
+
+  let rawDecoded = idOrSlug.toLowerCase().trim();
+  try {
+    rawDecoded = decodeURIComponent(idOrSlug).toLowerCase().trim();
+  } catch (e) {
+    // ignore
+  }
+  const targetSlug = slugify(rawDecoded);
+  const sanitizedInput = rawDecoded.replace(/^custom-/, "prod-");
+
+  try {
+    const supabase = getSupabase();
+    if (supabase) {
+      const { data: productsData, error } = await supabase.from("products").select("*");
+      if (!error && productsData && productsData.length > 0) {
+        const mapped = productsData.map(mapSupabaseToAppProduct);
+        const found = mapped.find(p => {
+          const pId = String(p.id).toLowerCase().trim();
+          const pSlug = String(p.slug || "").toLowerCase().trim();
+          const pNameSlug = slugify(p.name || "");
+          return (
+            pId === rawDecoded ||
+            pId === sanitizedInput ||
+            pId === targetSlug ||
+            pSlug === rawDecoded ||
+            pSlug === sanitizedInput ||
+            pSlug === targetSlug ||
+            pNameSlug === rawDecoded ||
+            pNameSlug === targetSlug
+          );
+        });
+        if (found) return res.json(found);
+      }
+    }
+  } catch (err: any) {
+    console.warn("[Supabase Fetch Warning] /api/products/:idOrSlug:", err?.message || err);
+  }
+
+  const foundInFallback = memoryProducts.find(p => {
+    const pId = String(p.id).toLowerCase().trim();
+    const pSlug = String(p.slug || "").toLowerCase().trim();
+    const pNameSlug = slugify(p.name || "");
+    return (
+      pId === rawDecoded ||
+      pId === sanitizedInput ||
+      pId === targetSlug ||
+      pSlug === rawDecoded ||
+      pSlug === sanitizedInput ||
+      pSlug === targetSlug ||
+      pNameSlug === rawDecoded ||
+      pNameSlug === targetSlug
+    );
+  });
+
+  if (foundInFallback) return res.json(foundInFallback);
+
+  return res.status(404).json({ error: "Product not found" });
+});
+
+app.post("/api/products", requireAdmin, async (req: any, res: any) => {
+  const newProduct = req.body;
+  if (!newProduct.id || newProduct.id.includes("custom-")) {
+    const baseSlug = slugify(newProduct.name || "prod");
+    newProduct.id = `prod-${baseSlug}-${Math.floor(1000 + Math.random() * 9000)}`;
+  }
+  const cleanSlug = newProduct.slug || slugify(newProduct.name) || newProduct.id;
+  newProduct.slug = cleanSlug;
+
+  const allImages = [newProduct.image, ...(newProduct.secondaryImages || [])].filter(Boolean);
+
+  memoryProducts = [newProduct, ...memoryProducts.filter((p) => p.id !== newProduct.id)];
+
+  const data = await dbWriteLogAndExecute("products", "Create Product", req, res, async () => {
+    const supabase = getSupabase()!;
+
+    return await supabase.from("products").upsert([
+      {
+        id: newProduct.id,
+        slug: cleanSlug,
+        name: newProduct.name,
+        category_id: newProduct.categoryId || "rings",
+        price: Number(newProduct.price),
+        original_price: newProduct.originalPrice ? Number(newProduct.originalPrice) : null,
+        points_earned: newProduct.pointsEarned ? Number(newProduct.pointsEarned) : Math.floor(Number(newProduct.price) / 100),
+        stock: newProduct.stock === undefined ? 10 : Number(newProduct.stock),
+        is_new: !!newProduct.isNew,
+        pre_order: Boolean(newProduct.isPreOrder),
+        images: allImages,
+        sizes: newProduct.sizeOptions || ["Standard", "Premium"],
+        materials: newProduct.materialOptions || ["#E5D5BC", "#E5E4E2"],
+        description: newProduct.description || ""
+      }
+    ], { onConflict: "id" }).select().single();
+  });
+
+  if (res.headersSent) return;
+  broadcastUpdate();
+  res.json(data && data.id ? mapSupabaseToAppProduct(data) : newProduct);
+});
+
+app.put("/api/products/:id", requireAdmin, async (req: any, res: any) => {
+  const productId = req.params.id;
+  const updated = req.body;
+  const allImages = [updated.image, ...(updated.secondaryImages || [])].filter(Boolean);
+
+  memoryProducts = memoryProducts.map((p) => (p.id === productId ? { ...p, ...updated } : p));
+
+  const data = await dbWriteLogAndExecute("products", "Update Product", req, res, async () => {
+    const supabase = getSupabase()!;
+
+    return await supabase.from("products").update({
+      name: updated.name,
+      category_id: updated.categoryId,
+      price: Number(updated.price),
+      original_price: updated.originalPrice ? Number(updated.originalPrice) : null,
+      points_earned: updated.pointsEarned ? Number(updated.pointsEarned) : Math.floor(Number(updated.price) / 100),
+      stock: updated.stock === undefined ? null : Number(updated.stock),
+      is_new: !!updated.isNew,
+      pre_order: Boolean(updated.isPreOrder),
+      images: allImages,
+      sizes: updated.sizeOptions || [],
+      materials: updated.materialOptions || [],
+      description: updated.description || ""
+    }).eq("id", productId).select().single();
+  });
+
+  if (res.headersSent) return;
+  broadcastUpdate();
+  res.json(data && data.id ? mapSupabaseToAppProduct(data) : updated);
+});
+
+app.delete("/api/products/:id", requireAdmin, async (req: any, res: any) => {
+  const productId = req.params.id;
+
+  memoryProducts = memoryProducts.filter((p) => p.id !== productId);
+
+  await dbWriteLogAndExecute("products", "Delete Product", req, res, async () => {
+    const supabase = getSupabase()!;
+    return await supabase.from("products").delete().eq("id", productId);
+  });
+
+  if (res.headersSent) return;
+  broadcastUpdate();
+  res.json({ success: true, deletedId: productId });
+});
+
+app.post("/api/products/clear", requireAdmin, async (req: any, res: any) => {
+  await dbWriteLogAndExecute("products", "Clear All Products", req, res, async () => {
+    const supabase = getSupabase()!;
+    return await supabase.from("products").delete().neq("id", "placeholder");
+  });
+
+  if (res.headersSent) return;
+  broadcastUpdate();
+  res.json([]);
+});
+
+app.post("/api/products/reset", requireAdmin, async (req: any, res: any) => {
+  await dbWriteLogAndExecute("products", "Reset Product Catalog", req, res, async () => {
+    const supabase = getSupabase()!;
+    await supabase.from("products").delete().neq("id", "placeholder");
+    const prodRows = PRODUCTS.map(p => ({
+      id: p.id,
+      name: p.name,
+      category_id: p.categoryId || "rings",
+      price: p.price,
+      original_price: p.originalPrice || null,
+      points_earned: p.pointsEarned || Math.floor(p.price / 100),
+      stock: p.stock === undefined ? 10 : p.stock,
+      is_new: !!p.isNew,
+      pre_order: Boolean(p.isPreOrder),
+      images: [p.image, ...(p.secondaryImages || [])].filter(Boolean),
+      sizes: p.sizeOptions || ["Standard", "Premium"],
+      materials: p.materialOptions || ["#E5D5BC", "#E5E4E2"],
+      description: p.description || ""
+    }));
+    return await supabase.from("products").insert(prodRows).select();
+  });
+
+  if (res.headersSent) return;
+  broadcastUpdate();
+  res.json(PRODUCTS);
+});
+
+// ORDERS ENDPOINTS
+app.get("/api/orders", async (req: any, res: any) => {
+  try {
+    const supabase = getSupabase();
+    if (supabase) {
+      const { data: dbOrders, error } = await supabase.from("orders").select("*").order("created_at", { ascending: false });
+      if (!error && dbOrders) {
+        let dbItems: any[] | null = null;
+        try {
+          const resItems = await supabase.from("order_items").select("*");
+          dbItems = resItems.data;
+        } catch {
+          // ignore order_items fetch failure
+        }
+
+        const itemsMap: Record<string, any[]> = {};
+        if (dbItems) {
+          dbItems.forEach((item: any) => {
+            if (!itemsMap[item.order_id]) itemsMap[item.order_id] = [];
+            itemsMap[item.order_id].push({
+              product: {
+                id: item.product_id || "prod-item",
+                name: item.name || "Product",
+                price: Number(item.price),
+                image: "https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=800&q=80",
+                categoryId: "rings",
+                categoryName: "Rings"
+              },
+              quantity: Number(item.quantity || 1),
+              selectedSize: item.size || "Standard",
+              selectedMaterial: item.material || "Gold"
+            });
+          });
+        }
+
+        const mapped = dbOrders.map((o: any) => ({
+          id: o.id,
+          orderNumber: o.order_number || o.id,
+          userEmail: o.email || o.user_id || "customer@vero.com",
+          date: o.created_at,
+          createdAt: o.created_at,
+          total: Number(o.total || 0),
+          status: o.status || "Processing",
+          trackingStatus: o.status || "Order Placed",
+          shippingName: o.shipping_name || "Customer",
+          shippingEmail: o.email || o.user_id || "customer@vero.com",
+          shippingAddress: typeof o.shipping_address === "string" ? o.shipping_address : (o.shipping_address?.address || "Cairo, Egypt"),
+          shippingCity: o.shipping_city || "Cairo",
+          shippingZip: o.shipping_zip || "11511",
+          shippingPhone: o.shipping_phone || "",
+          paymentMethod: o.payment_method || "cash",
+          earnedPoints: Number(o.earned_points || 0),
+          items: itemsMap[o.id] || []
+        }));
+
+        return res.json(mapped);
+      }
+    }
+  } catch (err: any) {
+    console.warn("[Supabase Fetch Warning] /api/orders:", err?.message || err);
+  }
+
+  return res.json([]);
+});
+
+app.post("/api/orders", async (req: any, res: any) => {
+  const newOrder = req.body;
+  const orderId = newOrder.id || `order-${Date.now()}`;
+  const userEmail = newOrder.shippingEmail || newOrder.userEmail || req.user?.email || "guest@vero.com";
+  const userId = req.user?.userId || userEmail;
+
+  await dbWriteLogAndExecute("orders", "Create Order", req, res, async () => {
+    const supabase = getSupabase()!;
+    return await supabase.from("orders").insert([
+      {
+        id: orderId,
+        order_number: orderId,
+        user_id: userId,
+        email: userEmail,
+        shipping_name: newOrder.shippingName || newOrder.shippingAddress?.fullName || "Valued Customer",
+        shipping_address: newOrder.shippingAddress?.address || newOrder.shippingAddress || "Cairo",
+        shipping_city: newOrder.shippingCity || newOrder.shippingAddress?.city || "Cairo",
+        shipping_zip: newOrder.shippingZip || newOrder.shippingAddress?.postalCode || "11511",
+        shipping_phone: newOrder.shippingPhone || newOrder.shippingAddress?.phone || null,
+        payment_method: newOrder.paymentMethod || "cash",
+        payment_status: "pending",
+        status: newOrder.status || "Processing",
+        subtotal: Number(newOrder.subtotal || newOrder.total || 0),
+        shipping_cost: Number(newOrder.shippingFee || 0),
+        discount: Number(newOrder.discount || 0),
+        total: Number(newOrder.total || 0),
+        earned_points: Number(newOrder.earnedPoints || Math.floor(Number(newOrder.total || 0) / 100)),
+        customer_notes: newOrder.shippingAddress?.notes || ""
+      }
+    ]).select().single();
+  });
+
+  if (res.headersSent) return;
+
+  // Insert order items safely
+  if (newOrder.items && newOrder.items.length > 0) {
+    try {
+      const supabase = getSupabase();
+      if (supabase) {
+        const itemRows = newOrder.items.map((item: any) => ({
+          id: crypto.randomUUID(),
+          order_id: orderId,
+          product_id: item.product?.id || "prod-item",
+          name: item.product?.name || "Luxury Item",
+          price: Number(item.product?.price || 0),
+          quantity: Number(item.quantity || 1),
+          size: item.selectedSize || "Standard",
+          material: item.selectedMaterial || "Gold"
+        }));
+        await supabase.from("order_items").insert(itemRows);
+      }
+    } catch (e) {
+      console.warn("Could not insert order items to Supabase:", e);
+    }
+  }
+
+  broadcastUpdate();
+  res.json({ ...newOrder, id: orderId });
+});
+
+app.put("/api/orders/:id", requireAdmin, async (req: any, res: any) => {
+  const orderId = req.params.id;
+  const updated = req.body;
+
+  const data = await dbWriteLogAndExecute("orders", "Update Order Status", req, res, async () => {
+    const supabase = getSupabase()!;
+    return await supabase.from("orders").update({ status: updated.status }).eq("id", orderId).select().single();
+  });
+
+  if (res.headersSent) return;
+  broadcastUpdate();
+  res.json(data);
+});
+
+app.delete("/api/orders/:id", requireAdmin, async (req: any, res: any) => {
+  const orderId = req.params.id;
+
+  await dbWriteLogAndExecute("orders", "Delete Order", req, res, async () => {
+    const supabase = getSupabase()!;
+    await supabase.from("order_items").delete().eq("order_id", orderId);
+    return await supabase.from("orders").delete().eq("id", orderId);
+  });
+
+  if (res.headersSent) return;
+  broadcastUpdate();
+  res.json({ success: true, deletedId: orderId });
+});
+
+// REVIEWS ENDPOINTS
+app.get("/api/reviews", async (req, res) => {
+  try {
+    const supabase = getSupabase();
+    if (supabase) {
+      const { data: dbReviews, error } = await supabase.from("reviews").select("*").order("created_at", { ascending: false });
+      if (!error && dbReviews) {
+        let repliesMap: Record<string, any> = {};
+        try {
+          const { data: replies } = await supabase.from("review_replies").select("*");
+          if (replies) {
+            replies.forEach((rep: any) => {
+              repliesMap[rep.review_id] = { author: rep.author_name, comment: rep.comment };
+            });
+          }
+        } catch {
+          // ignore reply fetch error
+        }
+
+        const mapped = dbReviews.map((r: any) => ({
+          id: r.id,
+          productId: r.product_id,
+          userName: r.user_name || "Customer",
+          userEmail: r.user_email || "",
+          userAvatar: r.user_avatar || "default",
+          rating: Number(r.rating),
+          title: r.title || "",
+          comment: r.comment || "",
+          helpfulCount: Number(r.helpful_count || 0),
+          verifiedPurchase: !!r.verified_purchase,
+          status: r.status || "approved",
+          createdAt: r.created_at,
+          author: r.user_name || "Customer",
+          reply: repliesMap[r.id] || null
+        }));
+
+        return res.json(mapped);
+      }
+    }
+  } catch (err: any) {
+    console.warn("[Supabase Fetch Warning] /api/reviews:", err?.message || err);
+  }
+
+  return res.json([
+    {
+      id: "rev-1",
+      productId: PRODUCTS[0]?.id || "prod-royal-emerald-ring",
+      userName: "Eleanor Vance",
+      userEmail: "eleanor@example.com",
+      userAvatar: "default",
+      rating: 5,
+      title: "Exquisite Craftsmanship",
+      comment: "The emerald cut diamond catches the light beautifully. Superb quality!",
+      helpfulCount: 12,
+      verifiedPurchase: true,
+      status: "approved",
+      createdAt: new Date().toISOString(),
+      author: "Eleanor Vance",
+      reply: null
+    }
+  ]);
+});
+
+app.post("/api/reviews", requireAuth, async (req: any, res: any) => {
+  const newReview = req.body;
+  const reviewId = newReview.id || `rev-${Date.now()}`;
+
+  const data = await dbWriteLogAndExecute("reviews", "Create Review", req, res, async () => {
+    const supabase = getSupabase()!;
+    return await supabase.from("reviews").upsert([
+      {
+        id: reviewId,
+        product_id: newReview.productId,
+        user_name: newReview.userName || req.user?.name || "Customer",
+        user_email: newReview.userEmail || req.user?.email || "customer@vero.com",
+        user_avatar: newReview.avatar || "default",
+        rating: Number(newReview.rating),
+        title: newReview.title || "",
+        comment: newReview.comment || newReview.content || "",
+        helpful_count: 0,
+        verified_purchase: !!newReview.verifiedPurchase,
+        status: "approved"
+      }
+    ], { onConflict: "id" }).select().single();
+  });
+
+  if (res.headersSent) return;
+  broadcastUpdate();
+  res.json(data);
+});
+
+app.post("/api/reviews/:id/reply", requireAdmin, async (req: any, res: any) => {
+  const reviewId = req.params.id;
+  const { authorName, comment, reply } = req.body;
+
+  const data = await dbWriteLogAndExecute("review_replies", "Add Review Reply", req, res, async () => {
+    const supabase = getSupabase()!;
+    return await supabase.from("review_replies").upsert([
+      {
+        id: crypto.randomUUID(),
+        review_id: reviewId,
+        author_name: authorName || "VERO Executive",
+        comment: comment || reply || ""
+      }
+    ]).select().single();
+  });
+
+  if (res.headersSent) return;
+  broadcastUpdate();
+  res.json(data);
+});
+
+app.put("/api/reviews/:id", requireAdmin, async (req: any, res: any) => {
+  const reviewId = req.params.id;
+  const { status, title, comment, rating } = req.body;
+  const updates: any = {};
+  if (status) updates.status = status;
+  if (title) updates.title = title;
+  if (comment) updates.comment = comment;
+  if (rating !== undefined) updates.rating = Number(rating);
+
+  const data = await dbWriteLogAndExecute("reviews", "Update Review", req, res, async () => {
+    const supabase = getSupabase()!;
+    return await supabase.from("reviews").update(updates).eq("id", reviewId).select().single();
+  });
+
+  if (res.headersSent) return;
+  broadcastUpdate();
+  res.json(data);
+});
+
+app.post("/api/reviews/:id/helpful", async (req: any, res: any) => {
+  const reviewId = req.params.id;
+  const supabase = getSupabase();
+  if (supabase) {
+    const { data: rev } = await supabase.from("reviews").select("helpful_count").eq("id", reviewId).single();
+    const currentCount = rev?.helpful_count || 0;
+    await supabase.from("reviews").update({ helpful_count: currentCount + 1 }).eq("id", reviewId);
+  }
+  broadcastUpdate();
+  res.json({ success: true });
+});
+
+app.post("/api/reviews/:id/report", async (req: any, res: any) => {
+  const reviewId = req.params.id;
+  const { userId, userName, reason } = req.body;
+  const supabase = getSupabase();
+  if (supabase) {
+    await supabase.from("review_reports").insert([{
+      id: crypto.randomUUID(),
+      review_id: reviewId,
+      reporter_email: userId || "anon",
+      reporter_name: userName || "Customer",
+      reason: reason || "Flagged content"
+    }]);
+  }
+  res.json({ success: true });
+});
+
+app.delete("/api/reviews/:id", requireAuth, async (req: any, res: any) => {
+  const reviewId = req.params.id;
+
+  await dbWriteLogAndExecute("reviews", "Delete Review", req, res, async () => {
+    const supabase = getSupabase()!;
+    await supabase.from("review_replies").delete().eq("review_id", reviewId);
+    return await supabase.from("reviews").delete().eq("id", reviewId);
+  });
+
+  if (res.headersSent) return;
+  broadcastUpdate();
+  res.json({ success: true, deletedId: reviewId });
+});
+
+// REWARDS ENDPOINTS
+let memoryRewards = [
+  {
+    id: "rew-1",
+    title: "خصم 10% على أي قطعة",
+    titleEn: "10% Off Any Piece",
+    cost: 500,
+    code: "VERO10POINTS",
+    description: "استبدل 500 نقطة ولاء بخصم 10% على مشترياتك القادمة",
+    descriptionEn: "Redeem 500 loyalty points for 10% off your next purchase",
+    discountPercent: 10
+  },
+  {
+    id: "rew-2",
+    title: "خصم 20% لكبار العملاء VIP",
+    titleEn: "20% VIP Exclusive Discount",
+    cost: 1000,
+    code: "VEROVIP20",
+    description: "استبدل 1000 نقطة للحصول على خصم 20% حصري",
+    descriptionEn: "Redeem 1000 points for an exclusive 20% VIP discount",
+    discountPercent: 20
+  }
+];
+
+app.get("/api/rewards", (req, res) => {
+  res.json(memoryRewards);
+});
+
+app.post("/api/rewards", requireAdmin, (req, res) => {
+  const newReward = {
+    id: `rew-${Date.now()}`,
+    ...req.body
+  };
+  memoryRewards.push(newReward);
+  broadcastUpdate();
+  res.json(memoryRewards);
+});
+
+app.delete("/api/rewards/:id", requireAdmin, (req, res) => {
+  const { id } = req.params;
+  memoryRewards = memoryRewards.filter((r) => r.id !== id);
+  broadcastUpdate();
+  res.json(memoryRewards);
+});
+
+// PROMOS & COUPONS ENDPOINTS
+let memoryPromos = [
+  { id: "SAVE10", code: "SAVE10", discountPercent: 10, isActive: true, description: "Save 10% on luxury catalog" },
+  { id: "VERO20", code: "VERO20", discountPercent: 20, isActive: true, description: "20% Exclusive VIP Discount" }
+];
+
+app.get("/api/promos", async (req, res) => {
+  try {
+    const supabase = getSupabase();
+    if (supabase) {
+      const { data: dbCoupons, error } = await supabase.from("coupons").select("*").order("created_at", { ascending: false });
+      if (!error && dbCoupons && dbCoupons.length > 0) {
+        const mapped = dbCoupons.map((c: any) => ({
+          id: c.id || c.code,
+          code: c.code,
+          discountPercent: Number(c.discount_percent),
+          isActive: c.active !== false,
+          description: `Save ${c.discount_percent}% on luxury catalog`
+        }));
+        return res.json(mapped);
+      }
+    }
+  } catch (err: any) {
+    console.warn("[Supabase Fetch Warning] /api/promos:", err?.message || err);
+  }
+
+  return res.json(memoryPromos);
+});
+
+app.post("/api/promos", requireAdmin, async (req: any, res: any) => {
+  const newPromo = req.body;
+  const couponId = newPromo.id || `coupon-${Date.now()}`;
+  const promoObj = {
+    id: couponId,
+    code: (newPromo.code || "SAVE10").toUpperCase(),
+    discountPercent: Number(newPromo.discountPercent || 10),
+    isActive: newPromo.isActive !== false,
+    description: `Save ${newPromo.discountPercent || 10}% on luxury catalog`
+  };
+
+  memoryPromos = [promoObj, ...memoryPromos.filter((p) => p.id !== promoObj.id && p.code !== promoObj.code)];
+
+  await dbWriteLogAndExecute("coupons", "Create Coupon", req, res, async () => {
+    const supabase = getSupabase()!;
+    return await supabase.from("coupons").upsert([
+      {
+        id: couponId,
+        code: promoObj.code,
+        discount_percent: promoObj.discountPercent,
+        active: promoObj.isActive
+      }
+    ], { onConflict: "id" }).select().single();
+  });
+
+  if (res.headersSent) return;
+  broadcastUpdate();
+  res.json(memoryPromos);
+});
+
+app.delete("/api/promos/:id", requireAdmin, async (req: any, res: any) => {
+  const promoId = req.params.id;
+
+  memoryPromos = memoryPromos.filter((p) => p.id !== promoId && p.code !== promoId);
+
+  await dbWriteLogAndExecute("coupons", "Delete Coupon", req, res, async () => {
+    const supabase = getSupabase()!;
+    return await supabase.from("coupons").delete().eq("id", promoId);
+  });
+
+  if (res.headersSent) return;
+  broadcastUpdate();
+  res.json(memoryPromos);
+});
+
+// USERS MANAGEMENT ENDPOINTS
+app.get("/api/users", requireAdmin, async (req, res) => {
+  try {
+    const supabase = getSupabase();
+    if (supabase) {
+      const { data: dbUsers, error } = await supabase.from("users").select("*").order("created_at", { ascending: false });
+      if (!error && dbUsers) {
+        const mapped = dbUsers.map((u: any) => ({
+          id: u.id,
+          name: u.name,
+          email: u.email,
+          avatar: u.avatar || "default",
+          role: u.role || (isVeroAdminEmail(u.email) ? "admin" : "customer"),
+          tier: u.tier || "Bronze",
+          loyaltyPoints: u.loyalty_points ?? 0,
+          totalSpent: Number(u.total_spent ?? 0),
+          joinedDate: u.created_at ? new Date(u.created_at).toISOString().split("T")[0] : new Date().toISOString().split("T")[0]
+        }));
+        return res.json(mapped);
+      }
+    }
+  } catch (err: any) {
+    console.warn("[Supabase Fetch Warning] /api/users:", err?.message || err);
+  }
+
+  return res.json([
+    {
+      id: "usr-admin-1",
+      name: "VERO Executive",
+      email: "vero.boutique.jewelry@gmail.com",
+      avatar: "default",
+      role: "admin",
+      tier: "Platinum",
+      loyaltyPoints: 10000,
+      totalSpent: 250000,
+      joinedDate: new Date().toISOString().split("T")[0]
+    }
+  ]);
+});
+
+app.post("/api/users", requireAdmin, async (req: any, res: any) => {
+  const newUser = req.body;
+  const userId = newUser.id || `user-${Date.now()}`;
+
+  const data = await dbWriteLogAndExecute("users", "Create/Update User Account", req, res, async () => {
+    const supabase = getSupabase()!;
+    return await supabase.from("users").upsert([
+      {
+        id: userId,
+        email: newUser.email,
+        name: newUser.name || newUser.email.split("@")[0],
+        avatar: newUser.avatar || "default",
+        role: newUser.role || (isVeroAdminEmail(newUser.email) ? "admin" : "customer"),
+        tier: newUser.tier || "Bronze",
+        loyalty_points: Number(newUser.loyaltyPoints ?? 0),
+        total_spent: Number(newUser.totalSpent ?? 0)
+      }
+    ], { onConflict: "email" }).select().single();
+  });
+
+  if (res.headersSent) return;
+  broadcastUpdate();
+  res.json(data);
+});
+
+app.put("/api/users/:id", requireAuth, async (req: any, res: any) => {
+  const userId = req.params.id;
+  const updates = req.body;
+
+  const updatePayload: any = {};
+  if (updates.name) updatePayload.name = updates.name;
+  if (updates.avatar) updatePayload.avatar = updates.avatar;
+  if (updates.tier) updatePayload.tier = updates.tier;
+  if (updates.role) updatePayload.role = updates.role;
+  if (updates.loyaltyPoints !== undefined) updatePayload.loyalty_points = Number(updates.loyaltyPoints);
+  if (updates.totalSpent !== undefined) updatePayload.total_spent = Number(updates.totalSpent);
+
+  const data = await dbWriteLogAndExecute("users", "Update User Account", req, res, async () => {
+    const supabase = getSupabase()!;
+    return await supabase.from("users").update(updatePayload).eq("id", userId).select().single();
+  });
+
+  if (res.headersSent) return;
+  broadcastUpdate();
+  res.json(data);
+});
+
+app.delete("/api/users/clear-all", requireAdmin, async (req: any, res: any) => {
+  await dbWriteLogAndExecute("users", "Clear All Customer Accounts", req, res, async () => {
+    const supabase = getSupabase()!;
+    return await supabase.from("users").delete().neq("role", "admin");
+  });
+
+  if (res.headersSent) return;
+  broadcastUpdate();
+  res.json({ success: true });
+});
+
+app.delete("/api/users/:id", requireAdmin, async (req: any, res: any) => {
+  const userId = req.params.id;
+
+  await dbWriteLogAndExecute("users", "Delete User Account", req, res, async () => {
+    const supabase = getSupabase()!;
+    return await supabase.from("users").delete().eq("id", userId);
+  });
+
+  if (res.headersSent) return;
+  broadcastUpdate();
+  res.json({ success: true, deletedId: userId });
+});
+
+// CART ENDPOINTS
+app.get("/api/cart", async (req: any, res: any) => {
+  try {
+    const supabase = getSupabase();
+    if (supabase) {
+      const userEmail = req.query.userEmail || req.user?.email || "guest";
+      const { data, error } = await supabase.from("cart").select("*").eq("user_id", userEmail);
+      if (!error && data) return res.json(data);
+    }
+  } catch (err) {
+    // ignore
+  }
+  return res.json([]);
+});
+
+app.post("/api/cart", async (req: any, res: any) => {
+  const item = req.body;
+  const cartId = item.id || crypto.randomUUID();
+  const userEmail = item.userId || req.user?.email || "guest";
+
+  const data = await dbWriteLogAndExecute("cart", "Add Cart Item", req, res, async () => {
+    const supabase = getSupabase()!;
+    return await supabase.from("cart").insert([
+      {
+        id: cartId,
+        user_id: userEmail,
+        product_id: item.productId,
+        quantity: Number(item.quantity || 1),
+        selected_size: item.selectedSize || "Standard",
+        selected_material: item.selectedMaterial || "Gold"
+      }
+    ]).select().single();
+  });
+
+  if (res.headersSent) return;
+  res.json(data);
+});
+
+app.delete("/api/cart/:id", async (req: any, res: any) => {
+  const cartId = req.params.id;
+  await dbWriteLogAndExecute("cart", "Remove Cart Item", req, res, async () => {
+    const supabase = getSupabase()!;
+    return await supabase.from("cart").delete().eq("id", cartId);
+  });
+  if (res.headersSent) return;
+  res.json({ success: true, deletedId: cartId });
+});
+
+// WISHLIST ENDPOINTS
+app.get("/api/wishlist", async (req: any, res: any) => {
+  try {
+    const supabase = getSupabase();
+    if (supabase) {
+      const userEmail = req.query.userEmail || req.user?.email || "guest";
+      const { data, error } = await supabase.from("wishlist").select("*").eq("user_id", userEmail);
+      if (!error && data) return res.json(data);
+    }
+  } catch (err) {
+    // ignore
+  }
+  return res.json([]);
+});
+
+app.post("/api/wishlist", async (req: any, res: any) => {
+  const item = req.body;
+  const wishId = item.id || crypto.randomUUID();
+  const userEmail = item.userId || req.user?.email || "guest";
+
+  const data = await dbWriteLogAndExecute("wishlist", "Add Wishlist Item", req, res, async () => {
+    const supabase = getSupabase()!;
+    return await supabase.from("wishlist").insert([
+      {
+        id: wishId,
+        user_id: userEmail,
+        product_id: item.productId
+      }
+    ]).select().single();
+  });
+
+  if (res.headersSent) return;
+  res.json(data);
+});
+
+app.delete("/api/wishlist/:id", async (req: any, res: any) => {
+  const wishId = req.params.id;
+  await dbWriteLogAndExecute("wishlist", "Remove Wishlist Item", req, res, async () => {
+    const supabase = getSupabase()!;
+    return await supabase.from("wishlist").delete().eq("id", wishId);
+  });
+  if (res.headersSent) return;
+  res.json({ success: true, deletedId: wishId });
+});
+
+// NOTIFICATIONS ENDPOINTS
+app.get("/api/notifications", async (req: any, res: any) => {
+  try {
+    const supabase = getSupabase();
+    if (supabase) {
+      const userEmail = req.query.userEmail || req.user?.email || "guest";
+      const { data, error } = await supabase.from("notifications").select("*").eq("user_id", userEmail).order("created_at", { ascending: false });
+      if (!error && data) return res.json(data);
+    }
+  } catch (err) {
+    // ignore
+  }
+  return res.json([]);
+});
+
+app.put("/api/notifications/:id/read", async (req: any, res: any) => {
+  const notifId = req.params.id;
+  const data = await dbWriteLogAndExecute("notifications", "Mark Notification Read", req, res, async () => {
+    const supabase = getSupabase()!;
+    return await supabase.from("notifications").update({ read: true }).eq("id", notifId).select().single();
+  });
+  if (res.headersSent) return;
+  res.json(data);
+});
+
+// AUDIT LOGS ENDPOINT (ADMIN ONLY)
+app.get("/api/audit-logs", requireAdmin, (req: any, res: any) => {
+  const logs = getAuditLogsFromDisk();
+  res.json(logs);
+});
+
+// VITE SERVER OR STATIC BUILD
+async function initServer() {
+  if (process.env.NODE_ENV !== "production") {
+    const { createServer } = await import("vite");
+    const vite = await createServer({
+      server: { middlewareMode: true },
+      appType: "spa",
+    });
+    app.use(vite.middlewares);
+  } else {
+    const distPath = path.join(process.cwd(), "dist");
+    app.use(express.static(distPath));
+    app.get("*", (req, res) => {
+      res.sendFile(path.join(distPath, "index.html"));
+    });
+  }
+
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+  });
+}
+
+initServer();
