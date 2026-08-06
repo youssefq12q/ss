@@ -29,7 +29,7 @@ import { motion, AnimatePresence } from "motion/react";
 
 import { useNavigate, useLocation, Routes, Route } from "react-router-dom";
 import { Product, CartItem, UserProfile, getTierFromSpent, Order, Reward, Promo, Review } from "./types";
-import { CATEGORIES, PRODUCTS, STORIES } from "./data";
+import { CATEGORIES, STORIES } from "./constants";
 import { safeFetch, safeJson } from "./utils/apiUtils";
 
 // Subcomponents
@@ -302,7 +302,7 @@ export default function App() {
         // ignore
       }
     }
-    return PRODUCTS;
+    return [];
   });
 
   const productsRef = React.useRef(products);
@@ -715,11 +715,11 @@ export default function App() {
         const data = await res.json();
         setProductsState(data);
       } else {
-        setProductsState(PRODUCTS);
+        setProductsState([]);
       }
     } catch (err) {
       console.error("Error resetting catalog on server:", err);
-      setProductsState(PRODUCTS);
+      setProductsState([]);
     }
   };
 

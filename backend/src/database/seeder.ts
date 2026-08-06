@@ -1,5 +1,5 @@
 import { getSupabase } from "../config/supabase";
-import { PRODUCTS } from "../data";
+import { FALLBACK_PRODUCTS } from "../services/fallbackService";
 
 export async function seedSupabaseDatabase() {
   const supabase = getSupabase();
@@ -23,7 +23,7 @@ export async function seedSupabaseDatabase() {
     const { data: prodCheck } = await supabase.from("products").select("id").limit(1);
     if (!prodCheck || prodCheck.length === 0) {
       console.log("[Supabase Auto-Seed] Seeding products table...");
-      const prodRows = PRODUCTS.map((p) => ({
+      const prodRows = FALLBACK_PRODUCTS.map((p) => ({
         id: p.id,
         name: p.name,
         category_id: p.categoryId || "rings",
@@ -84,7 +84,7 @@ export async function seedSupabaseDatabase() {
       await supabase.from("reviews").upsert([
         {
           id: "rev-1",
-          product_id: PRODUCTS[0]?.id || "prod-royal-emerald-ring",
+          product_id: FALLBACK_PRODUCTS[0]?.id || "prod-royal-emerald-ring",
           user_name: "Eleanor Vance",
           user_email: "eleanor@example.com",
           rating: 5,

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from "react";
 import { Product, Order, Reward, Promo, Review } from "../types";
-import { PRODUCTS } from "../data";
+import { productService, isSupabaseConfigured } from "../services/supabaseService";
 
 interface ProductContextType {
   products: Product[];
@@ -43,7 +43,7 @@ export const ProductProvider: React.FC<{ children: React.ReactNode }> = ({ child
         // ignore
       }
     }
-    return PRODUCTS;
+    return [];
   });
 
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(
@@ -63,13 +63,19 @@ export const ProductProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const fetchProducts = useCallback(async () => {
     try {
-      const res = await fetch("/api/products");
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data) && data.length > 0) {
-          setProducts(data);
-          localStorage.setItem("vero_products", JSON.stringify(data));
+      let data: Product[] = [];
+      if (isSupabaseConfigured()) {
+        data = await productService.getProducts();
+      }
+      if (!data || data.length === 0) {
+        const res = await fetch("/api/products");
+        if (res.ok) {
+          data = await res.json();
         }
+      }
+      if (Array.isArray(data) && data.length > 0) {
+        setProducts(data);
+        localStorage.setItem("vero_products", JSON.stringify(data));
       }
     } catch (e) {
       console.warn("Error fetching products:", e);
@@ -131,6 +137,12 @@ export const ProductProvider: React.FC<{ children: React.ReactNode }> = ({ child
     fetchPromos();
     fetchReviews();
   }, [fetchProducts, fetchOrders, fetchRewards, fetchPromos, fetchReviews]);
+
+  useEffect(() => {
+    if (!selectedProduct && products.length > 0) {
+      setSelectedProduct(products.find((p) => p.id === "sculpted-aurelian-ring") || products[0] || null);
+    }
+  }, [products, selectedProduct]);
 
   const productRatingMap = useMemo(() => {
     const map: Record<string, { sum: number; count: number }> = {};

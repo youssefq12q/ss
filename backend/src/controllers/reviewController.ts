@@ -3,7 +3,6 @@ import { Request, Response } from "express";
 import { getSupabase } from "../config/supabase";
 import { dbWriteLogAndExecute } from "../database/writeLogger";
 import { broadcastUpdate } from "../services/sseService";
-import { PRODUCTS } from "../data";
 import { AuthenticatedRequest } from "../middleware/authMiddleware";
 
 export async function getReviews(req: Request, res: Response) {
@@ -51,7 +50,7 @@ export async function getReviews(req: Request, res: Response) {
   return res.json([
     {
       id: "rev-1",
-      productId: PRODUCTS[0]?.id || "prod-royal-emerald-ring",
+      productId: "prod-royal-emerald-ring",
       userName: "Eleanor Vance",
       userEmail: "eleanor@example.com",
       userAvatar: "default",

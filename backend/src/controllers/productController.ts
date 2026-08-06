@@ -3,7 +3,7 @@ import { getSupabase } from "../config/supabase";
 import { dbWriteLogAndExecute } from "../database/writeLogger";
 import { broadcastUpdate } from "../services/sseService";
 import { slugify } from "../utils/securityUtils";
-import { PRODUCTS } from "../data";
+import { FALLBACK_PRODUCTS } from "../services/fallbackService";
 import { Product } from "../types";
 
 export function mapSupabaseToAppProduct(p: any): Product {
@@ -45,7 +45,7 @@ export function mapSupabaseToAppProduct(p: any): Product {
   };
 }
 
-let memoryProducts: Product[] = PRODUCTS.map(mapSupabaseToAppProduct);
+let memoryProducts: Product[] = FALLBACK_PRODUCTS.map(mapSupabaseToAppProduct);
 
 export async function getProducts(req: Request, res: Response) {
   const { category, search, sort, page, limit } = req.query;
@@ -270,11 +270,11 @@ export async function clearProducts(req: Request, res: Response) {
 }
 
 export async function resetProducts(req: Request, res: Response) {
-  memoryProducts = PRODUCTS.map(mapSupabaseToAppProduct);
+  memoryProducts = FALLBACK_PRODUCTS.map(mapSupabaseToAppProduct);
   await dbWriteLogAndExecute("products", "Reset Product Catalog", req, res, async () => {
     const supabase = getSupabase()!;
     await supabase.from("products").delete().neq("id", "placeholder");
-    const prodRows = PRODUCTS.map((p) => ({
+    const prodRows = FALLBACK_PRODUCTS.map((p) => ({
       id: p.id,
       name: p.name,
       category_id: p.categoryId || "rings",
@@ -294,5 +294,5 @@ export async function resetProducts(req: Request, res: Response) {
 
   if (res.headersSent) return;
   broadcastUpdate();
-  res.json(PRODUCTS);
+  res.json(FALLBACK_PRODUCTS);
 }
