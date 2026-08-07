@@ -14,7 +14,7 @@ export default function PreOrderModal({
   product,
   isOpen,
   onClose,
-  whatsappNumber = "201102136064",
+  whatsappNumber = "201559907692",
 }: PreOrderModalProps) {
   if (!isOpen || !product) return null;
 

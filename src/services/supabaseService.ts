@@ -670,10 +670,13 @@ export const reviewService = {
       .insert([{
         id,
         product_id: productId,
-        author: review.author,
+        author: review.author || review.userName || "Customer",
+        user_name: review.userName || review.author || "Customer",
+        user_email: review.userEmail || "",
         rating: review.rating,
-        comment: review.comment,
-        date: review.date
+        comment: review.comment || review.review || "",
+        title: review.title || "",
+        status: "approved",
       }]);
 
     if (error) throw error;

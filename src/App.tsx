@@ -2961,7 +2961,7 @@ export default function App() {
                     </button>
                     
                     <a
-                      href={`https://wa.me/201102136064?text=${encodeURIComponent("مرحباً VERO Boutique، أود الاستفسار عن منتج أو المساعدة في طلب.")}`}
+                      href={`https://wa.me/201559907692?text=${encodeURIComponent("مرحباً VERO Boutique، أود الاستفسار عن منتج أو المساعدة في طلب.")}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold py-3.5 rounded-sm transition-all shadow-sm tracking-widest uppercase flex items-center justify-center gap-1.5 cursor-pointer"

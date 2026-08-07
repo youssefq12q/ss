@@ -110,7 +110,7 @@ export default function CheckoutFlow({
   const [pointsDiscountAmount, setPointsDiscountAmount] = React.useState(0);
 
   const getWhatsAppLink = (orderNumToUse?: string) => {
-    const phone = "201102136064"; // Updated store WhatsApp phone number
+    const phone = "201559907692"; // Updated store WhatsApp phone number
     const orderNum = orderNumToUse || generatedOrderNumber || "VR-TEMP";
     const discountVal = selectedPointsTier ? Math.round(total * (selectedPointsTier.percentage / 100)) : 0;
     const finalPayable = Math.max(0, total - discountVal);

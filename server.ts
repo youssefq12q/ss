@@ -440,36 +440,66 @@ function requireAdmin(req: any, res: any, next: any) {
 
 // Product Mappers
 function mapSupabaseToAppProduct(p: any) {
-  const images = Array.isArray(p.images) ? p.images : (p.images ? [p.images] : []);
-  const mainImage = images[0] || "https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=800&q=80";
-  const secImages = images.slice(1);
-  const origPrice = p.original_price ? Number(p.original_price) : undefined;
-  const currentPrice = Number(p.price);
-  let discountPct: number | undefined = undefined;
-  if (origPrice && origPrice > currentPrice) {
+  if (!p) return null;
+
+  // 1. Determine images
+  let images: string[] = [];
+  if (Array.isArray(p.images) && p.images.length > 0) {
+    images = p.images;
+  } else if (p.image) {
+    images = [p.image, ...(Array.isArray(p.secondaryImages) ? p.secondaryImages : [])];
+  } else if (p.images && typeof p.images === "string") {
+    images = [p.images];
+  }
+
+  const mainImage = images[0] || p.image || "https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=800&q=80";
+  const secImages = images.slice(1).filter((img: string) => img !== mainImage);
+
+  // 2. Category
+  const catId = p.categoryId || p.category_id || "rings";
+  const catName = p.categoryName || (catId.charAt(0).toUpperCase() + catId.slice(1));
+
+  // 3. Prices
+  const origPrice = p.originalPrice !== undefined ? (p.originalPrice === "" ? undefined : Number(p.originalPrice)) : (p.original_price ? Number(p.original_price) : undefined);
+  const currentPrice = Number(p.price || 0);
+
+  let discountPct: number | undefined = p.discountPercent !== undefined ? (p.discountPercent === "" ? undefined : Number(p.discountPercent)) : undefined;
+  if (discountPct === undefined && origPrice && origPrice > currentPrice) {
     discountPct = Math.round(((origPrice - currentPrice) / origPrice) * 100);
   }
 
+  // 4. Points
+  const pts = p.pointsEarned !== undefined ? (p.pointsEarned === "" ? undefined : Number(p.pointsEarned)) : (p.points_earned ? Number(p.points_earned) : Math.floor(currentPrice / 100));
+
+  // 5. Badges
+  const isNewVal = p.isNew !== undefined ? Boolean(p.isNew) : (p.is_new !== undefined ? Boolean(p.is_new) : true);
+  const isPreOrderVal = p.isPreOrder !== undefined ? Boolean(p.isPreOrder) : Boolean(p.pre_order ?? p.is_pre_order);
+
+  // 6. Options
+  const mats = Array.isArray(p.materialOptions) && p.materialOptions.length > 0 ? p.materialOptions : (Array.isArray(p.materials) && p.materials.length > 0 ? p.materials : ["#E5D5BC", "#E5E4E2"]);
+  const sizes = Array.isArray(p.sizeOptions) && p.sizeOptions.length > 0 ? p.sizeOptions : (Array.isArray(p.sizes) && p.sizes.length > 0 ? p.sizes : ["Standard", "Premium"]);
+  const details = Array.isArray(p.details) && p.details.length > 0 ? p.details : ["18k Gold Finish", "Hand-polished"];
+
   return {
-    id: p.id,
-    name: p.name,
-    categoryId: p.category_id || "rings",
-    categoryName: (p.category_id || "rings").charAt(0).toUpperCase() + (p.category_id || "rings").slice(1),
+    id: String(p.id),
+    name: p.name || "Untitled Creation",
+    categoryId: catId,
+    categoryName: catName,
     price: currentPrice,
     originalPrice: origPrice,
     discountPercent: discountPct,
-    pointsEarned: p.points_earned ? Number(p.points_earned) : Math.floor(currentPrice / 100),
+    pointsEarned: pts,
     image: mainImage,
     secondaryImages: secImages,
     description: p.description || "",
-    tagline: p.tagline || "",
-    isNew: p.is_new !== false,
-    isPreOrder: !!(p.pre_order ?? p.is_pre_order ?? p.isPreOrder),
-    materialOptions: Array.isArray(p.materials) && p.materials.length > 0 ? p.materials : ["#E5D5BC", "#E5E4E2"],
-    sizeOptions: Array.isArray(p.sizes) && p.sizes.length > 0 ? p.sizes : ["Standard", "Premium"],
-    details: Array.isArray(p.details) ? p.details : ["18k Gold Finish", "Hand-polished"],
+    tagline: p.tagline || `"${p.name || 'VERO Creation'}"`,
+    isNew: isNewVal,
+    isPreOrder: isPreOrderVal,
+    materialOptions: mats,
+    sizeOptions: sizes,
+    details: details,
     craftsmanship: p.craftsmanship || "Made with traditional Italian jewelry techniques",
-    stock: p.stock === null || p.stock === undefined ? undefined : Number(p.stock)
+    stock: p.stock === null || p.stock === undefined || p.stock === "" ? undefined : Number(p.stock)
   };
 }
 
@@ -683,13 +713,40 @@ app.get("/api/products", async (req, res) => {
       const { data: productsData, error } = await supabase.from("products").select("*").order("created_at", { ascending: false });
       if (!error && productsData && productsData.length > 0) {
         const mapped = productsData.map(mapSupabaseToAppProduct).filter(Boolean);
-        memoryProducts = mapped;
-        saveProductsToDisk(mapped);
-        return res.json(mapped);
+        // Merge Supabase products with memoryProducts so custom local products aren't lost!
+        const productMap = new Map<string, any>();
+        memoryProducts.forEach((p) => { if (p && p.id) productMap.set(String(p.id), p); });
+        mapped.forEach((p) => { if (p && p.id) productMap.set(String(p.id), p); });
+        memoryProducts = Array.from(productMap.values());
+        saveProductsToDisk(memoryProducts);
+        return res.json(memoryProducts);
       }
     } catch (e) {
       console.warn("Supabase products fetch failed, using memory fallback:", e);
     }
+  }
+
+  return res.json(memoryProducts);
+});
+
+app.get("/api/products/:idOrSlug", async (req, res) => {
+  const { idOrSlug } = req.params;
+  let decoded = idOrSlug;
+  try {
+    decoded = decodeURIComponent(idOrSlug).toLowerCase().trim();
+  } catch (e) {
+    decoded = idOrSlug.toLowerCase().trim();
+  }
+
+  const found = memoryProducts.find((p) => {
+    if (!p) return false;
+    const pId = p.id ? String(p.id).toLowerCase().trim() : "";
+    const pNameRaw = (p.name || "").toLowerCase().trim();
+    return pId === decoded || pNameRaw === decoded;
+  });
+
+  if (found) {
+    return res.json(found);
   }
 
   return res.json(memoryProducts);
@@ -721,7 +778,9 @@ app.post("/api/products", requireAdmin, async (req: any, res: any) => {
           images: allImages,
           sizes: newProduct.sizeOptions || ["Standard", "Premium"],
           materials: newProduct.materialOptions || ["#E5D5BC", "#E5E4E2"],
-          description: newProduct.description || ""
+          description: newProduct.description || "",
+          tagline: newProduct.tagline || "",
+          craftsmanship: newProduct.craftsmanship || ""
         }
       ], { onConflict: "id" });
     } catch (e) {
@@ -757,7 +816,9 @@ app.put("/api/products/:id", requireAdmin, async (req: any, res: any) => {
         images: allImages,
         sizes: updated.sizeOptions || [],
         materials: updated.materialOptions || [],
-        description: updated.description || ""
+        description: updated.description || "",
+        tagline: updated.tagline || "",
+        craftsmanship: updated.craftsmanship || ""
       }).eq("id", productId);
     } catch (e) {
       console.warn("Supabase product update notice:", e);
@@ -963,70 +1024,106 @@ app.delete("/api/orders/:id", requireAdmin, async (req: any, res: any) => {
 });
 
 // REVIEWS ENDPOINTS
+let memoryReviews: any[] = [];
+
 app.get("/api/reviews", async (req, res) => {
   const supabase = getSupabase();
-  if (!supabase) return res.status(500).json({ error: "Supabase database client is not configured." });
+  if (supabase) {
+    const { data: dbReviews, error } = await supabase.from("reviews").select("*").order("created_at", { ascending: false });
+    if (!error && dbReviews) {
+      const { data: replies } = await supabase.from("review_replies").select("*");
+      const repliesMap: Record<string, any> = {};
+      if (replies) {
+        replies.forEach((rep: any) => {
+          repliesMap[rep.review_id] = { author: rep.author_name, comment: rep.comment };
+        });
+      }
 
-  const { data: dbReviews, error } = await supabase.from("reviews").select("*").order("created_at", { ascending: false });
-  if (error) {
-    console.error("[Supabase Fetch Error] /api/reviews:", error);
-    return res.status(500).json({ error: error.message, details: error.details, code: error.code });
+      const mapped = dbReviews.map((r: any) => {
+        const text = r.comment || r.review || "";
+        return {
+          id: r.id,
+          productId: r.product_id,
+          userName: r.user_name || "Customer",
+          userEmail: r.user_email || "",
+          userAvatar: r.user_avatar || "default",
+          rating: Number(r.rating || 5),
+          title: r.title || "",
+          comment: text,
+          review: text,
+          helpfulCount: Number(r.helpful_count || 0),
+          verifiedPurchase: !!r.verified_purchase,
+          status: r.status || "approved",
+          createdAt: r.created_at || new Date().toISOString(),
+          author: r.user_name || "Customer",
+          reply: repliesMap[r.id] || null
+        };
+      });
+
+      return res.json(mapped);
+    }
   }
 
-  const { data: replies } = await supabase.from("review_replies").select("*");
-  const repliesMap: Record<string, any> = {};
-  if (replies) {
-    replies.forEach((rep: any) => {
-      repliesMap[rep.review_id] = { author: rep.author_name, comment: rep.comment };
-    });
-  }
-
-  const mapped = (dbReviews || []).map((r: any) => ({
-    id: r.id,
-    productId: r.product_id,
-    userName: r.user_name || "Customer",
-    userEmail: r.user_email || "",
-    userAvatar: r.user_avatar || "default",
-    rating: Number(r.rating),
-    title: r.title || "",
-    comment: r.comment || "",
-    helpfulCount: Number(r.helpful_count || 0),
-    verifiedPurchase: !!r.verified_purchase,
-    status: r.status || "approved",
-    createdAt: r.created_at,
-    author: r.user_name || "Customer",
-    reply: repliesMap[r.id] || null
-  }));
-
-  return res.json(mapped);
+  // Fallback to memory reviews
+  return res.json(memoryReviews);
 });
 
 app.post("/api/reviews", requireAuth, async (req: any, res: any) => {
   const newReview = req.body;
   const reviewId = newReview.id || `rev-${Date.now()}`;
+  const reviewText = newReview.comment || newReview.review || newReview.content || "";
 
-  const data = await dbWriteLogAndExecute("reviews", "Create Review", req, res, async () => {
-    const supabase = getSupabase()!;
-    return await supabase.from("reviews").upsert([
-      {
-        id: reviewId,
-        product_id: newReview.productId,
-        user_name: newReview.userName || req.user?.name || "Customer",
-        user_email: newReview.userEmail || req.user?.email || "customer@vero.com",
-        user_avatar: newReview.avatar || "default",
-        rating: Number(newReview.rating),
-        title: newReview.title || "",
-        comment: newReview.comment || newReview.content || "",
-        helpful_count: 0,
-        verified_purchase: !!newReview.verifiedPurchase,
-        status: "approved"
-      }
-    ], { onConflict: "id" }).select().single();
-  });
+  const savedReview = {
+    id: reviewId,
+    productId: newReview.productId,
+    productName: newReview.productName || "",
+    productImage: newReview.productImage || "",
+    orderId: newReview.orderId || "",
+    userId: newReview.userId || req.user?.email || "anon",
+    userName: newReview.userName || req.user?.name || "Customer",
+    userEmail: newReview.userEmail || req.user?.email || "customer@vero.com",
+    userAvatar: newReview.avatar || "default",
+    rating: Number(newReview.rating || 5),
+    title: newReview.title || "",
+    comment: reviewText,
+    review: reviewText,
+    helpfulCount: 0,
+    verifiedPurchase: !!newReview.verifiedPurchase,
+    recommend: newReview.recommend !== undefined ? Boolean(newReview.recommend) : true,
+    isAnonymous: Boolean(newReview.isAnonymous),
+    images: newReview.images || [],
+    videoUrl: newReview.videoUrl || "",
+    status: "approved",
+    createdAt: new Date().toISOString()
+  };
 
-  if (res.headersSent) return;
+  memoryReviews = [savedReview, ...memoryReviews.filter(r => r.id !== reviewId)];
+
+  const supabase = getSupabase();
+  if (supabase) {
+    try {
+      await supabase.from("reviews").upsert([
+        {
+          id: reviewId,
+          product_id: newReview.productId,
+          user_name: savedReview.userName,
+          user_email: savedReview.userEmail,
+          user_avatar: savedReview.userAvatar,
+          rating: savedReview.rating,
+          title: savedReview.title,
+          comment: reviewText,
+          helpful_count: 0,
+          verified_purchase: savedReview.verifiedPurchase,
+          status: "approved"
+        }
+      ], { onConflict: "id" });
+    } catch (err) {
+      console.warn("Supabase review upsert warning:", err);
+    }
+  }
+
   broadcastUpdate();
-  res.json(data);
+  res.json(savedReview);
 });
 
 app.post("/api/reviews/:id/reply", requireAdmin, async (req: any, res: any) => {
@@ -1050,23 +1147,41 @@ app.post("/api/reviews/:id/reply", requireAdmin, async (req: any, res: any) => {
   res.json(data);
 });
 
-app.put("/api/reviews/:id", requireAdmin, async (req: any, res: any) => {
+app.put("/api/reviews/:id", requireAuth, async (req: any, res: any) => {
   const reviewId = req.params.id;
-  const { status, title, comment, rating } = req.body;
+  const { status, title, comment, review, rating } = req.body;
   const updates: any = {};
+  const text = comment || review;
   if (status) updates.status = status;
   if (title) updates.title = title;
-  if (comment) updates.comment = comment;
+  if (text) updates.comment = text;
   if (rating !== undefined) updates.rating = Number(rating);
 
-  const data = await dbWriteLogAndExecute("reviews", "Update Review", req, res, async () => {
-    const supabase = getSupabase()!;
-    return await supabase.from("reviews").update(updates).eq("id", reviewId).select().single();
+  memoryReviews = memoryReviews.map(r => {
+    if (r.id === reviewId) {
+      return {
+        ...r,
+        title: title || r.title,
+        comment: text || r.comment,
+        review: text || r.review,
+        rating: rating !== undefined ? Number(rating) : r.rating,
+        status: status || r.status
+      };
+    }
+    return r;
   });
 
-  if (res.headersSent) return;
+  const supabase = getSupabase();
+  if (supabase) {
+    try {
+      await supabase.from("reviews").update(updates).eq("id", reviewId);
+    } catch (e) {
+      console.warn("Supabase review update notice:", e);
+    }
+  }
+
   broadcastUpdate();
-  res.json(data);
+  res.json({ success: true, id: reviewId });
 });
 
 app.post("/api/reviews/:id/helpful", async (req: any, res: any) => {

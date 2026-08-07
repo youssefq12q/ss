@@ -508,7 +508,7 @@ export default function OrderTrackingView({
             <button
               type="button"
               onClick={onContactSupport || (() => {
-                const whatsappUrl = `https://wa.me/201102136064?text=${encodeURIComponent(`مرحباً فريق VERO، أود الاستفسار عن حالة طلبي رقم #${formattedOrderNumber}`)}`;
+                const whatsappUrl = `https://wa.me/201559907692?text=${encodeURIComponent(`مرحباً فريق VERO، أود الاستفسار عن حالة طلبي رقم #${formattedOrderNumber}`)}`;
                 window.open(whatsappUrl, "_blank");
               })}
               className="w-full sm:w-auto px-5 py-2.5 bg-[#1f1915] hover:bg-[#c5a880] text-white text-xs font-bold rounded-xl transition-all shadow-xs active:scale-95 text-center shrink-0 flex items-center justify-center gap-2"

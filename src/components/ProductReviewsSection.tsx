@@ -64,9 +64,13 @@ export default function ProductReviewsSection({
   // Filter approved reviews for this product
   const productReviews = useMemo(() => {
     return allReviews.filter(
-      (r) => r.productId === productId && (isAdmin || r.status === "approved" || r.userId === user?.email || r.userEmail === user?.email)
+      (r) =>
+        (r.productId === productId ||
+         r.productId?.toLowerCase() === productId?.toLowerCase() ||
+         (productName && r.productName?.toLowerCase() === productName?.toLowerCase())) &&
+        (isAdmin || r.status === "approved" || !r.status || r.userId === user?.email || r.userEmail === user?.email)
     );
-  }, [allReviews, productId, user, isAdmin]);
+  }, [allReviews, productId, productName, user, isAdmin]);
 
   // Statistics calculation
   const stats = useMemo(() => {
@@ -301,6 +305,7 @@ export default function ProductReviewsSection({
         rating: formRating,
         title: formTitle.trim(),
         review: formText.trim(),
+        comment: formText.trim(),
         verifiedPurchase: !!userPurchasedAndDeliveredOrder || !!existingUserReview?.verifiedPurchase,
         recommend: formRecommend,
         isAnonymous: formAnonymous,

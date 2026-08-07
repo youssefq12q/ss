@@ -164,6 +164,8 @@ export interface Promo {
   id: string;
   code: string;
   discountPercent: number;
+  isActive?: boolean;
+  description?: string;
 }
 
 

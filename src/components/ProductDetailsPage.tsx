@@ -100,17 +100,34 @@ export default function ProductDetailsPage({
 
       try {
         let fetched: Product[] = [];
-        // First try Express API
+        // First try specific product endpoint or full products list
         try {
-          const res = await safeFetch("/api/products");
+          const res = await safeFetch(`/api/products/${encodeURIComponent(idOrSlug || "")}`);
           if (res.ok) {
             const data = await res.json();
             if (Array.isArray(data)) {
               fetched = data;
+            } else if (data && data.id) {
+              fetched = [data];
             }
           }
         } catch (e) {
           // ignore
+        }
+
+        // If specific product fetch returned nothing, try full /api/products
+        if ((!fetched || fetched.length === 0) && isMounted) {
+          try {
+            const res = await safeFetch("/api/products");
+            if (res.ok) {
+              const data = await res.json();
+              if (Array.isArray(data)) {
+                fetched = data;
+              }
+            }
+          } catch (e) {
+            // ignore
+          }
         }
 
         // Fall back to Supabase if Express API was empty
@@ -471,6 +488,54 @@ export default function ProductDetailsPage({
                         Only {product.stock} items remaining in boutique stock
                       </span>
                     )}
+                  </div>
+                )}
+
+                {/* Sensory Tagline */}
+                {product.tagline && (
+                  <p className="text-xs md:text-sm text-brand-gold italic font-serif font-light border-r-2 border-brand-gold pr-3 py-0.5 my-4">
+                    {product.tagline}
+                  </p>
+                )}
+
+                {/* Brand Description / وصف المنتج */}
+                {product.description && (
+                  <div className="my-4 p-4 bg-brand-linen/20 rounded border border-brand-outline-variant/20 space-y-1.5">
+                    <span className="text-[10px] font-bold text-brand-gold uppercase tracking-wider block">
+                      وصف المنتج / Brand Description
+                    </span>
+                    <p className="text-xs text-brand-umber font-light leading-relaxed whitespace-pre-line">
+                      {product.description}
+                    </p>
+                  </div>
+                )}
+
+                {/* Artisanal Craftsmanship Note */}
+                {product.craftsmanship && (
+                  <div className="my-3 p-3.5 bg-amber-50/50 rounded border border-amber-200/60 space-y-1">
+                    <span className="text-[10px] font-bold text-amber-900 uppercase tracking-wider block">
+                      الصياغة اليدوية / Artisanal Craftsmanship
+                    </span>
+                    <p className="text-xs text-brand-umber/90 font-light leading-relaxed">
+                      {product.craftsmanship}
+                    </p>
+                  </div>
+                )}
+
+                {/* Fine Specifications */}
+                {product.details && product.details.length > 0 && (
+                  <div className="my-4 space-y-2">
+                    <span className="text-[10px] font-bold text-brand-umber uppercase tracking-[0.15em] block">
+                      المواصفات والتفاصيل / Fine Specifications
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-brand-outline font-light">
+                      {product.details.map((detail, idx) => (
+                        <div key={idx} className="flex items-center gap-2 bg-white p-2 rounded border border-brand-outline-variant/20">
+                          <span className="w-1.5 h-1.5 rounded-full bg-brand-gold shrink-0"></span>
+                          <span>{detail}</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>

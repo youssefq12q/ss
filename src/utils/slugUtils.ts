@@ -14,11 +14,11 @@ export function slugify(text: string): string {
 export function getProductIdentifier(product: Product): string {
   if (!product) return "";
   if (product.id && !product.id.includes(" ")) {
-    return product.id;
+    return encodeURIComponent(product.id);
   }
   const slug = slugify(product.name);
   if (slug) return slug;
-  return product.id || "product";
+  return encodeURIComponent(product.id || "product");
 }
 
 export function findProductByIdOrSlug(products: Product[], idOrSlug: string): Product | undefined {
@@ -36,12 +36,14 @@ export function findProductByIdOrSlug(products: Product[], idOrSlug: string): Pr
   return products.find((p) => {
     if (!p) return false;
     const pId = p.id ? String(p.id).toLowerCase().trim() : "";
+    const pIdSlug = p.id ? slugify(String(p.id)) : "";
     const pNameRaw = (p.name || "").toLowerCase().trim();
     const pNameSlug = slugify(p.name || "");
 
     return (
       pId === decoded ||
       pId === targetSlug ||
+      (pIdSlug && (pIdSlug === decoded || pIdSlug === targetSlug)) ||
       pNameRaw === decoded ||
       (pNameSlug && (pNameSlug === decoded || pNameSlug === targetSlug))
     );

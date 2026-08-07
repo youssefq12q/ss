@@ -1188,7 +1188,7 @@ export default function AdminPanel({
 
                         {/* WhatsApp Communication Prompt */}
                         <a
-                          href={`https://wa.me/${selectedOrder.shippingPhone ? selectedOrder.shippingPhone.replace(/[^0-9]/g, "") : "201102136064"}?text=${encodeURIComponent(
+                          href={`https://wa.me/${selectedOrder.shippingPhone ? selectedOrder.shippingPhone.replace(/[^0-9]/g, "") : "201559907692"}?text=${encodeURIComponent(
                             `مرحباً ${selectedOrder.shippingName}،\nيسعدنا إخطاركم بأن حالة طلبكم رقم #${selectedOrder.orderNumber} لدى Vero Boutique هي الآن: *${selectedOrder.status}*.\n\nتفاصيل الطلب:\nالقيمة الإجمالية: EGP ${selectedOrder.total?.toLocaleString()}\nالعنوان: ${typeof selectedOrder.shippingAddress === 'object' && selectedOrder.shippingAddress !== null ? ((selectedOrder.shippingAddress as any).address || JSON.stringify(selectedOrder.shippingAddress)) : String(selectedOrder.shippingAddress || "")}، ${selectedOrder.shippingCity}\n\nشكراً لتسوقكم معنا!`
                           )}`}
                           target="_blank"
