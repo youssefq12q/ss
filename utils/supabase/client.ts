@@ -58,17 +58,7 @@ export function isSupabaseConfigured(): boolean {
   if (url === "https://your-project.supabase.co" || url.includes("your-project")) return false;
   if (key === "your-anon-key" || key === "your-service-role-key" || key === "1") return false;
 
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
-    const host = parsed.hostname;
-    if (!host) return false;
-    if (host === "localhost" || host === "127.0.0.1") return true;
-    if (host.includes("your-project")) return false;
-    return host.includes(".");
-  } catch {
-    return false;
-  }
+  return url.startsWith("http://") || url.startsWith("https://");
 }
 
 /**

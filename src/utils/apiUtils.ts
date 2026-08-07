@@ -25,17 +25,3 @@ export async function safeFetch(
   }
   return fetch(url, options);
 }
-
-export async function safeJson<T = any>(res: Response, fallback: T = [] as any): Promise<T> {
-  if (!res || !res.ok) return fallback;
-  const contentType = res.headers.get("content-type") || "";
-  if (!contentType.includes("application/json")) {
-    return fallback;
-  }
-  try {
-    const data = await res.json();
-    return data !== undefined ? data : fallback;
-  } catch {
-    return fallback;
-  }
-}

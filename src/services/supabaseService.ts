@@ -20,21 +20,13 @@ export const supabase = isSupabaseConfigured() ? createBaseClient() : null;
 // COLUMN MAPPINGS (SNAKE_CASE <-> CAMELCASE)
 // ==========================================
 
-import { slugify, findProductByIdOrSlug } from "../utils/slugUtils";
-
 export function mapDbProductToLocal(dbProduct: any): Product {
   const images = Array.isArray(dbProduct.images) ? dbProduct.images : (dbProduct.images ? [dbProduct.images] : []);
   const mainImage = dbProduct.image || images[0] || "https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=800&q=80";
   const secImages = dbProduct.secondaryImages || dbProduct.secondary_images || images.slice(1);
 
-  // Sanitize any temporary custom- ID coming from old data
-  const rawId = dbProduct.id ? String(dbProduct.id) : "";
-  const cleanId = rawId.startsWith("custom-") ? rawId.replace(/^custom-/, "prod-") : rawId;
-  const computedSlug = dbProduct.slug || slugify(dbProduct.name) || cleanId;
-
   return {
-    id: cleanId,
-    slug: computedSlug,
+    id: dbProduct.id,
     name: dbProduct.name,
     categoryId: dbProduct.category_id || dbProduct.categoryId || "rings",
     categoryName: dbProduct.category_name || dbProduct.categoryName || "Rings",
@@ -55,13 +47,9 @@ export function mapDbProductToLocal(dbProduct: any): Product {
 
 export function mapLocalProductToDb(product: Product): any {
   const allImages = [product.image, ...(product.secondaryImages || [])].filter(Boolean);
-  const rawId = product.id ? String(product.id) : "";
-  const cleanId = rawId.startsWith("custom-") ? rawId.replace(/^custom-/, "prod-") : (rawId || `prod-${slugify(product.name)}-${Math.floor(1000 + Math.random() * 9000)}`);
-  const computedSlug = product.slug || slugify(product.name) || cleanId;
 
   return {
-    id: cleanId,
-    slug: computedSlug,
+    id: product.id,
     name: product.name,
     category_id: product.categoryId || "rings",
     price: product.price,
@@ -288,12 +276,6 @@ export const productService = {
       }
       return localProd;
     });
-  },
-
-  async getProductByIdOrSlug(idOrSlug: string): Promise<Product | null> {
-    const all = await this.getProducts();
-    if (!all || all.length === 0) return null;
-    return findProductByIdOrSlug(all, idOrSlug) || null;
   },
 
   async createProduct(product: Product): Promise<Product> {

@@ -30,7 +30,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { useNavigate, useLocation, Routes, Route } from "react-router-dom";
 import { Product, CartItem, UserProfile, getTierFromSpent, Order, Reward, Promo, Review } from "./types";
 import { CATEGORIES, PRODUCTS, STORIES } from "./data";
-import { safeFetch, safeJson } from "./utils/apiUtils";
+import { safeFetch } from "./utils/apiUtils";
 
 // Subcomponents
 import Header from "./components/Header";
@@ -381,10 +381,16 @@ export default function App() {
               body: JSON.stringify(added),
             });
             if (res.ok) {
-              const serverProducts = await res.json();
-              if (Array.isArray(serverProducts)) {
-                setProductsState(serverProducts);
-                localStorage.setItem("vero_products", JSON.stringify(serverProducts));
+              const serverRes = await res.json();
+              if (Array.isArray(serverRes)) {
+                setProductsState(serverRes);
+                localStorage.setItem("vero_products", JSON.stringify(serverRes));
+              } else if (serverRes && serverRes.id) {
+                setProductsState((prev) => {
+                  const updated = [serverRes, ...prev.filter((p) => p.id !== serverRes.id)];
+                  localStorage.setItem("vero_products", JSON.stringify(updated));
+                  return updated;
+                });
               }
             } else {
               console.error("Server product addition error:", res.status, await res.text());
@@ -407,10 +413,16 @@ export default function App() {
               body: JSON.stringify(modified),
             });
             if (res.ok) {
-              const serverProducts = await res.json();
-              if (Array.isArray(serverProducts)) {
-                setProductsState(serverProducts);
-                localStorage.setItem("vero_products", JSON.stringify(serverProducts));
+              const serverRes = await res.json();
+              if (Array.isArray(serverRes)) {
+                setProductsState(serverRes);
+                localStorage.setItem("vero_products", JSON.stringify(serverRes));
+              } else if (serverRes && serverRes.id) {
+                setProductsState((prev) => {
+                  const updated = prev.map((p) => (p.id === serverRes.id ? serverRes : p));
+                  localStorage.setItem("vero_products", JSON.stringify(updated));
+                  return updated;
+                });
               }
             } else {
               console.error("Server product edit error:", res.status, await res.text());
@@ -437,12 +449,12 @@ export default function App() {
   const fetchReviews = React.useCallback(async () => {
     try {
       const res = await safeFetch("/api/reviews");
-      const data = await safeJson<Review[]>(res, []);
-      if (Array.isArray(data) && data.length > 0) {
+      if (res.ok) {
+        const data = await res.json();
         setAllReviews(data);
       }
     } catch (err) {
-      console.warn("Could not fetch reviews from server:", err);
+      console.error("Error fetching reviews from server:", err);
     }
   }, []);
 
@@ -463,53 +475,58 @@ export default function App() {
   const fetchOrders = React.useCallback(async () => {
     try {
       const res = await safeFetch("/api/orders");
-      const data = await safeJson<Order[]>(res, []);
-      if (Array.isArray(data) && data.length > 0) {
+      if (res.ok) {
+        const data = await res.json();
         setOrders(data);
       }
     } catch (err) {
-      console.warn("Could not fetch orders from server:", err);
+      console.error("Error fetching orders from server:", err);
     }
   }, []);
 
   const fetchRewards = React.useCallback(async () => {
     try {
       const res = await safeFetch("/api/rewards");
-      const data = await safeJson<Reward[]>(res, []);
-      if (Array.isArray(data) && data.length > 0) {
+      if (res.ok) {
+        const data = await res.json();
         setRewards(data);
       }
     } catch (err) {
-      console.warn("Could not fetch rewards from server:", err);
+      console.error("Error fetching rewards from server:", err);
     }
   }, []);
 
   const fetchPromos = React.useCallback(async () => {
     try {
       const res = await safeFetch("/api/promos");
-      const data = await safeJson<Promo[]>(res, []);
-      if (Array.isArray(data) && data.length > 0) {
+      if (res.ok) {
+        const data = await res.json();
         setPromos(data);
       }
     } catch (err) {
-      console.warn("Could not fetch promos from server:", err);
+      console.error("Error fetching promos from server:", err);
     }
   }, []);
 
   const fetchProducts = React.useCallback(async () => {
     try {
       const res = await safeFetch("/api/products");
-      const data = await safeJson<Product[]>(res, []);
-      if (Array.isArray(data) && data.length > 0) {
-        setProductsState(data);
-        try {
-          localStorage.setItem("vero_products", JSON.stringify(data));
-        } catch (e) {
-          // ignore
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          setProductsState((prev) => {
+            if (JSON.stringify(prev) === JSON.stringify(data)) return prev;
+            return data;
+          });
+          try {
+            localStorage.setItem("vero_products", JSON.stringify(data));
+          } catch (e) {
+            // ignore
+          }
         }
       }
     } catch (err) {
-      console.warn("Could not fetch products from server:", err);
+      console.error("Error fetching products from server:", err);
     }
   }, []);
 

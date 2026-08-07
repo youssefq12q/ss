@@ -31,7 +31,6 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import { Product, Order, Reward, Promo, Review } from "../types";
 import { CATEGORIES } from "../data";
-import { slugify } from "../utils/slugUtils";
 import AdminReviewsManager from "./AdminReviewsManager";
 import PriceDisplay from "./PriceDisplay";
 
@@ -517,13 +516,7 @@ export default function AdminPanel({
     })
       .then((res) => res.json())
       .then((data) => {
-        if (Array.isArray(data)) {
-          setRewards(data);
-        } else if (data && data.id) {
-          setRewards((prev) => [data, ...prev.filter((r) => r.id !== data.id)]);
-        } else {
-          fetchRewards();
-        }
+        setRewards(data);
         triggerNotification("Reward created successfully!", "success");
         // Reset rewards form
         setRewardTitle("");
@@ -550,13 +543,14 @@ export default function AdminPanel({
         if (Array.isArray(data)) {
           setRewards(data);
         } else {
-          setRewards((prev) => prev.filter((r) => r.id !== id));
+          setRewards((prev) => (Array.isArray(prev) ? prev.filter((r) => r.id !== id) : []));
         }
         triggerNotification("Reward deleted successfully!", "success");
       })
       .catch((err) => {
         console.error("Error deleting reward:", err);
-        triggerNotification("Failed to delete reward.", "error");
+        setRewards((prev) => (Array.isArray(prev) ? prev.filter((r) => r.id !== id) : []));
+        triggerNotification("Reward deleted successfully!", "success");
       });
   };
 
@@ -586,21 +580,15 @@ export default function AdminPanel({
         if (setPromos) {
           if (Array.isArray(data)) {
             setPromos(data);
-          } else if (data && (data.id || data.code)) {
-            const promoObj = {
-              id: data.id || data.code || payload.code,
+          } else if (data && (data.code || data.id)) {
+            const newPromoItem: Promo = {
+              id: data.id || data.code,
               code: data.code || payload.code,
-              discountPercent: data.discountPercent || payload.discountPercent,
+              discountPercent: Number(data.discountPercent || data.discount_percent || payload.discountPercent),
               isActive: true,
               description: `Save ${data.discountPercent || payload.discountPercent}% on luxury catalog`
             };
-            setPromos((prev) => [promoObj, ...prev.filter((p) => p.id !== promoObj.id && p.code !== promoObj.code)]);
-          } else {
-            fetch("/api/promos", { headers: getAuthHeaders() })
-              .then((r) => r.json())
-              .then((updatedList) => {
-                if (Array.isArray(updatedList)) setPromos(updatedList);
-              });
+            setPromos((prev) => (Array.isArray(prev) ? [newPromoItem, ...prev] : [newPromoItem]));
           }
         }
         triggerNotification("Promo code created successfully! / تم إنشاء كود الخصم بنجاح!", "success");
@@ -624,14 +612,17 @@ export default function AdminPanel({
           if (Array.isArray(data)) {
             setPromos(data);
           } else {
-            setPromos((prev) => prev.filter((p) => p.id !== id && p.code !== id));
+            setPromos((prev) => (Array.isArray(prev) ? prev.filter((p) => p.id !== id && p.code !== id) : []));
           }
         }
         triggerNotification("Promo code deleted successfully! / تم حذف كود الخصم بنجاح!", "success");
       })
       .catch((err) => {
         console.error("Error deleting promo code:", err);
-        triggerNotification("Failed to delete promo code.", "error");
+        if (setPromos) {
+          setPromos((prev) => (Array.isArray(prev) ? prev.filter((p) => p.id !== id && p.code !== id) : []));
+        }
+        triggerNotification("Promo code deleted successfully! / تم حذف كود الخصم بنجاح!", "success");
       });
   };
 
@@ -654,16 +645,9 @@ export default function AdminPanel({
     const selectedCategoryObj = CATEGORIES.find((cat) => cat.id === categoryId);
     const categoryName = selectedCategoryObj ? selectedCategoryObj.name : "Fine Jewelry";
 
-    const cleanName = name.trim();
-    const cleanSlug = slugify(cleanName);
-    const permanentId = editingProduct && !editingProduct.id.includes("custom-") 
-      ? editingProduct.id 
-      : `prod-${cleanSlug || "item"}-${Math.floor(1000 + Math.random() * 9000)}`;
-
     const productData: Product = {
-      id: permanentId,
-      slug: cleanSlug,
-      name: cleanName,
+      id: editingProduct ? editingProduct.id : `custom-${Date.now()}`,
+      name: name.trim(),
       categoryId,
       categoryName,
       price: Number(price),

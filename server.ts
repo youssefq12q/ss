@@ -55,21 +55,16 @@ function resolveSupabaseEnv() {
 
 function isSupabaseConfigured(): boolean {
   const { url, key } = resolveSupabaseEnv();
-  if (!url || !key) return false;
-  if (url === "https://your-project.supabase.co" || url.includes("your-project")) return false;
-  if (key === "your-anon-key" || key === "your-service-role-key" || key === "1") return false;
-
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
-    const host = parsed.hostname;
-    if (!host) return false;
-    if (host === "localhost" || host === "127.0.0.1") return true;
-    if (host.includes("your-project") || host.includes("iryyhighhwwmtpzqmjak")) return false;
-    return host.includes(".");
-  } catch {
-    return false;
-  }
+  return !!(
+    url &&
+    (url.startsWith("http://") || url.startsWith("https://")) &&
+    url !== "https://your-project.supabase.co" &&
+    !url.includes("your-project") &&
+    key &&
+    key !== "your-anon-key" &&
+    key !== "your-service-role-key" &&
+    key !== "1"
+  );
 }
 
 let dbClient: any = null;
@@ -221,33 +216,66 @@ async function dbWriteLogAndExecute(
   console.log(`Payload:`, JSON.stringify(req.body, null, 2));
 
   const supabase = getSupabase();
-  if (supabase) {
-    try {
-      const { data, error } = await operation();
-      if (!error && data) {
-        console.log(`[DB WRITE SUCCESS] Table: ${table} | Insert/Update Result:`, JSON.stringify(data, null, 2));
-        console.log(`=======================================================`);
-        return data;
-      }
-      if (error) {
-        console.warn(`[DB WRITE SUPABASE WARNING] Table: ${table} | Error:`, error.message);
-      }
-    } catch (err: any) {
-      console.warn(`[DB WRITE SUPABASE EXCEPTION] Table: ${table} | Exception:`, err?.message || err);
-    }
-  } else {
-    console.log(`[DB WRITE INFO] Supabase client is not active. Using in-memory fallback for ${table}.`);
+  if (!supabase) {
+    console.error(`[DB WRITE FAILED] Supabase client is NOT configured.`);
+    return res.status(500).json({ error: "Supabase database client is not configured." });
   }
 
-  console.log(`[DB WRITE LOCAL FALLBACK] Table: ${table} | Action: ${actionName}`);
-  console.log(`=======================================================`);
-  return req.body;
+  try {
+    const { data, error } = await operation();
+    if (error) {
+      console.error(`[DB WRITE ERROR] Table: ${table} | Supabase Error:`, JSON.stringify(error, null, 2));
+      console.log(`=======================================================`);
+      return res.status(500).json({
+        error: `Supabase database error: ${error.message || "Failed to execute database write"}`,
+        code: error.code,
+        details: error.details,
+        hint: error.hint,
+        table
+      });
+    }
+
+    console.log(`[DB WRITE SUCCESS] Table: ${table} | Insert/Update Result:`, JSON.stringify(data, null, 2));
+    console.log(`=======================================================`);
+    return data;
+  } catch (err: any) {
+    console.error(`[DB WRITE UNHANDLED EXCEPTION] Table: ${table} | Error:`, err);
+    console.log(`=======================================================`);
+    return res.status(500).json({ error: err.message || "Internal database server error", table });
+  }
 }
 
 // Security & Audit Log Helper
 const AUDIT_LOGS_FILE = path.join(process.cwd(), "audit-logs.json");
 const DB_FILE = path.join(process.cwd(), "products-db.json");
 const ORDERS_FILE = path.join(process.cwd(), "orders-db.json");
+
+function getProductsFromDisk(): any[] {
+  try {
+    if (fs.existsSync(DB_FILE)) {
+      const content = fs.readFileSync(DB_FILE, "utf-8");
+      const parsed = JSON.parse(content);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch (err) {
+    console.error("Error reading products-db.json:", err);
+  }
+  return PRODUCTS;
+}
+
+function saveProductsToDisk(productsArr: any[]) {
+  try {
+    fs.writeFileSync(DB_FILE, JSON.stringify(productsArr, null, 2), "utf-8");
+  } catch (err) {
+    console.error("Error saving products-db.json:", err);
+  }
+}
+
+let memoryProducts: any[] = getProductsFromDisk();
+let memoryPromos: any[] = [
+  { id: "coupon-vero10", code: "VERO10", discountPercent: 10, isActive: true, description: "Save 10% on luxury catalog" },
+  { id: "coupon-vip20", code: "VIP20", discountPercent: 20, isActive: true, description: "Save 20% on luxury catalog" }
+];
 
 function getAuditLogsFromDisk(): any[] {
   try {
@@ -410,17 +438,6 @@ function requireAdmin(req: any, res: any, next: any) {
   });
 }
 
-function slugify(text: string): string {
-  if (!text) return "";
-  return text
-    .toString()
-    .toLowerCase()
-    .trim()
-    .replace(/[^\w\s-]/g, "")
-    .replace(/[\s_-]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
 // Product Mappers
 function mapSupabaseToAppProduct(p: any) {
   const images = Array.isArray(p.images) ? p.images : (p.images ? [p.images] : []);
@@ -433,13 +450,8 @@ function mapSupabaseToAppProduct(p: any) {
     discountPct = Math.round(((origPrice - currentPrice) / origPrice) * 100);
   }
 
-  const rawId = p.id ? String(p.id) : "";
-  const cleanId = rawId.startsWith("custom-") ? rawId.replace(/^custom-/, "prod-") : rawId;
-  const computedSlug = p.slug || slugify(p.name) || cleanId;
-
   return {
-    id: cleanId,
-    slug: computedSlug,
+    id: p.id,
     name: p.name,
     categoryId: p.category_id || "rings",
     categoryName: (p.category_id || "rings").charAt(0).toUpperCase() + (p.category_id || "rings").slice(1),
@@ -664,170 +676,113 @@ app.post("/api/categories", requireAdmin, async (req: any, res: any) => {
 });
 
 // PRODUCTS ENDPOINTS
-let memoryProducts: any[] = PRODUCTS.map(mapSupabaseToAppProduct);
-
 app.get("/api/products", async (req, res) => {
-  try {
-    const supabase = getSupabase();
-    if (supabase) {
+  const supabase = getSupabase();
+  if (supabase) {
+    try {
       const { data: productsData, error } = await supabase.from("products").select("*").order("created_at", { ascending: false });
       if (!error && productsData && productsData.length > 0) {
-        const mapped = productsData.map(mapSupabaseToAppProduct);
+        const mapped = productsData.map(mapSupabaseToAppProduct).filter(Boolean);
+        memoryProducts = mapped;
+        saveProductsToDisk(mapped);
         return res.json(mapped);
       }
+    } catch (e) {
+      console.warn("Supabase products fetch failed, using memory fallback:", e);
     }
-  } catch (err: any) {
-    console.warn("[Supabase Fetch Warning] /api/products:", err?.message || err);
   }
 
   return res.json(memoryProducts);
 });
 
-app.get("/api/products/:idOrSlug", async (req, res) => {
-  const { idOrSlug } = req.params;
-  if (!idOrSlug) return res.status(404).json({ error: "Product not found" });
-
-  let rawDecoded = idOrSlug.toLowerCase().trim();
-  try {
-    rawDecoded = decodeURIComponent(idOrSlug).toLowerCase().trim();
-  } catch (e) {
-    // ignore
-  }
-  const targetSlug = slugify(rawDecoded);
-  const sanitizedInput = rawDecoded.replace(/^custom-/, "prod-");
-
-  try {
-    const supabase = getSupabase();
-    if (supabase) {
-      const { data: productsData, error } = await supabase.from("products").select("*");
-      if (!error && productsData && productsData.length > 0) {
-        const mapped = productsData.map(mapSupabaseToAppProduct);
-        const found = mapped.find(p => {
-          const pId = String(p.id).toLowerCase().trim();
-          const pSlug = String(p.slug || "").toLowerCase().trim();
-          const pNameSlug = slugify(p.name || "");
-          return (
-            pId === rawDecoded ||
-            pId === sanitizedInput ||
-            pId === targetSlug ||
-            pSlug === rawDecoded ||
-            pSlug === sanitizedInput ||
-            pSlug === targetSlug ||
-            pNameSlug === rawDecoded ||
-            pNameSlug === targetSlug
-          );
-        });
-        if (found) return res.json(found);
-      }
-    }
-  } catch (err: any) {
-    console.warn("[Supabase Fetch Warning] /api/products/:idOrSlug:", err?.message || err);
-  }
-
-  const foundInFallback = memoryProducts.find(p => {
-    const pId = String(p.id).toLowerCase().trim();
-    const pSlug = String(p.slug || "").toLowerCase().trim();
-    const pNameSlug = slugify(p.name || "");
-    return (
-      pId === rawDecoded ||
-      pId === sanitizedInput ||
-      pId === targetSlug ||
-      pSlug === rawDecoded ||
-      pSlug === sanitizedInput ||
-      pSlug === targetSlug ||
-      pNameSlug === rawDecoded ||
-      pNameSlug === targetSlug
-    );
-  });
-
-  if (foundInFallback) return res.json(foundInFallback);
-
-  return res.status(404).json({ error: "Product not found" });
-});
-
 app.post("/api/products", requireAdmin, async (req: any, res: any) => {
   const newProduct = req.body;
-  if (!newProduct.id || newProduct.id.includes("custom-")) {
-    const baseSlug = slugify(newProduct.name || "prod");
-    newProduct.id = `prod-${baseSlug}-${Math.floor(1000 + Math.random() * 9000)}`;
+  if (!newProduct.id) newProduct.id = `prod-${Date.now()}`;
+
+  const mappedNewProduct = mapSupabaseToAppProduct(newProduct) || newProduct;
+  memoryProducts = [mappedNewProduct, ...memoryProducts.filter((p) => p.id !== mappedNewProduct.id)];
+  saveProductsToDisk(memoryProducts);
+
+  const supabase = getSupabase();
+  if (supabase) {
+    try {
+      const allImages = [newProduct.image, ...(newProduct.secondaryImages || [])].filter(Boolean);
+      await supabase.from("products").upsert([
+        {
+          id: newProduct.id,
+          name: newProduct.name,
+          category_id: newProduct.categoryId || "rings",
+          price: Number(newProduct.price),
+          original_price: newProduct.originalPrice ? Number(newProduct.originalPrice) : null,
+          points_earned: newProduct.pointsEarned ? Number(newProduct.pointsEarned) : Math.floor(Number(newProduct.price) / 100),
+          stock: newProduct.stock === undefined ? 10 : Number(newProduct.stock),
+          is_new: !!newProduct.isNew,
+          pre_order: Boolean(newProduct.isPreOrder),
+          images: allImages,
+          sizes: newProduct.sizeOptions || ["Standard", "Premium"],
+          materials: newProduct.materialOptions || ["#E5D5BC", "#E5E4E2"],
+          description: newProduct.description || ""
+        }
+      ], { onConflict: "id" });
+    } catch (e) {
+      console.warn("Supabase product upsert notice:", e);
+    }
   }
-  const cleanSlug = newProduct.slug || slugify(newProduct.name) || newProduct.id;
-  newProduct.slug = cleanSlug;
 
-  const allImages = [newProduct.image, ...(newProduct.secondaryImages || [])].filter(Boolean);
-
-  memoryProducts = [newProduct, ...memoryProducts.filter((p) => p.id !== newProduct.id)];
-
-  const data = await dbWriteLogAndExecute("products", "Create Product", req, res, async () => {
-    const supabase = getSupabase()!;
-
-    return await supabase.from("products").upsert([
-      {
-        id: newProduct.id,
-        slug: cleanSlug,
-        name: newProduct.name,
-        category_id: newProduct.categoryId || "rings",
-        price: Number(newProduct.price),
-        original_price: newProduct.originalPrice ? Number(newProduct.originalPrice) : null,
-        points_earned: newProduct.pointsEarned ? Number(newProduct.pointsEarned) : Math.floor(Number(newProduct.price) / 100),
-        stock: newProduct.stock === undefined ? 10 : Number(newProduct.stock),
-        is_new: !!newProduct.isNew,
-        pre_order: Boolean(newProduct.isPreOrder),
-        images: allImages,
-        sizes: newProduct.sizeOptions || ["Standard", "Premium"],
-        materials: newProduct.materialOptions || ["#E5D5BC", "#E5E4E2"],
-        description: newProduct.description || ""
-      }
-    ], { onConflict: "id" }).select().single();
-  });
-
-  if (res.headersSent) return;
   broadcastUpdate();
-  res.json(data && data.id ? mapSupabaseToAppProduct(data) : newProduct);
+  res.json(mappedNewProduct);
 });
 
 app.put("/api/products/:id", requireAdmin, async (req: any, res: any) => {
   const productId = req.params.id;
   const updated = req.body;
-  const allImages = [updated.image, ...(updated.secondaryImages || [])].filter(Boolean);
+  const mappedUpdated = mapSupabaseToAppProduct(updated) || updated;
 
-  memoryProducts = memoryProducts.map((p) => (p.id === productId ? { ...p, ...updated } : p));
+  memoryProducts = memoryProducts.map((p) => (p.id === productId ? mappedUpdated : p));
+  saveProductsToDisk(memoryProducts);
 
-  const data = await dbWriteLogAndExecute("products", "Update Product", req, res, async () => {
-    const supabase = getSupabase()!;
+  const supabase = getSupabase();
+  if (supabase) {
+    try {
+      const allImages = [updated.image, ...(updated.secondaryImages || [])].filter(Boolean);
+      await supabase.from("products").update({
+        name: updated.name,
+        category_id: updated.categoryId,
+        price: Number(updated.price),
+        original_price: updated.originalPrice ? Number(updated.originalPrice) : null,
+        points_earned: updated.pointsEarned ? Number(updated.pointsEarned) : Math.floor(Number(updated.price) / 100),
+        stock: updated.stock === undefined ? null : Number(updated.stock),
+        is_new: !!updated.isNew,
+        pre_order: Boolean(updated.isPreOrder),
+        images: allImages,
+        sizes: updated.sizeOptions || [],
+        materials: updated.materialOptions || [],
+        description: updated.description || ""
+      }).eq("id", productId);
+    } catch (e) {
+      console.warn("Supabase product update notice:", e);
+    }
+  }
 
-    return await supabase.from("products").update({
-      name: updated.name,
-      category_id: updated.categoryId,
-      price: Number(updated.price),
-      original_price: updated.originalPrice ? Number(updated.originalPrice) : null,
-      points_earned: updated.pointsEarned ? Number(updated.pointsEarned) : Math.floor(Number(updated.price) / 100),
-      stock: updated.stock === undefined ? null : Number(updated.stock),
-      is_new: !!updated.isNew,
-      pre_order: Boolean(updated.isPreOrder),
-      images: allImages,
-      sizes: updated.sizeOptions || [],
-      materials: updated.materialOptions || [],
-      description: updated.description || ""
-    }).eq("id", productId).select().single();
-  });
-
-  if (res.headersSent) return;
   broadcastUpdate();
-  res.json(data && data.id ? mapSupabaseToAppProduct(data) : updated);
+  res.json(mappedUpdated);
 });
 
 app.delete("/api/products/:id", requireAdmin, async (req: any, res: any) => {
   const productId = req.params.id;
 
   memoryProducts = memoryProducts.filter((p) => p.id !== productId);
+  saveProductsToDisk(memoryProducts);
 
-  await dbWriteLogAndExecute("products", "Delete Product", req, res, async () => {
-    const supabase = getSupabase()!;
-    return await supabase.from("products").delete().eq("id", productId);
-  });
+  const supabase = getSupabase();
+  if (supabase) {
+    try {
+      await supabase.from("products").delete().eq("id", productId);
+    } catch (e) {
+      // ignore
+    }
+  }
 
-  if (res.headersSent) return;
   broadcastUpdate();
   res.json({ success: true, deletedId: productId });
 });
@@ -872,67 +827,57 @@ app.post("/api/products/reset", requireAdmin, async (req: any, res: any) => {
 
 // ORDERS ENDPOINTS
 app.get("/api/orders", async (req: any, res: any) => {
-  try {
-    const supabase = getSupabase();
-    if (supabase) {
-      const { data: dbOrders, error } = await supabase.from("orders").select("*").order("created_at", { ascending: false });
-      if (!error && dbOrders) {
-        let dbItems: any[] | null = null;
-        try {
-          const resItems = await supabase.from("order_items").select("*");
-          dbItems = resItems.data;
-        } catch {
-          // ignore order_items fetch failure
-        }
+  const supabase = getSupabase();
+  if (!supabase) return res.status(500).json({ error: "Supabase database client is not configured." });
 
-        const itemsMap: Record<string, any[]> = {};
-        if (dbItems) {
-          dbItems.forEach((item: any) => {
-            if (!itemsMap[item.order_id]) itemsMap[item.order_id] = [];
-            itemsMap[item.order_id].push({
-              product: {
-                id: item.product_id || "prod-item",
-                name: item.name || "Product",
-                price: Number(item.price),
-                image: "https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=800&q=80",
-                categoryId: "rings",
-                categoryName: "Rings"
-              },
-              quantity: Number(item.quantity || 1),
-              selectedSize: item.size || "Standard",
-              selectedMaterial: item.material || "Gold"
-            });
-          });
-        }
-
-        const mapped = dbOrders.map((o: any) => ({
-          id: o.id,
-          orderNumber: o.order_number || o.id,
-          userEmail: o.email || o.user_id || "customer@vero.com",
-          date: o.created_at,
-          createdAt: o.created_at,
-          total: Number(o.total || 0),
-          status: o.status || "Processing",
-          trackingStatus: o.status || "Order Placed",
-          shippingName: o.shipping_name || "Customer",
-          shippingEmail: o.email || o.user_id || "customer@vero.com",
-          shippingAddress: typeof o.shipping_address === "string" ? o.shipping_address : (o.shipping_address?.address || "Cairo, Egypt"),
-          shippingCity: o.shipping_city || "Cairo",
-          shippingZip: o.shipping_zip || "11511",
-          shippingPhone: o.shipping_phone || "",
-          paymentMethod: o.payment_method || "cash",
-          earnedPoints: Number(o.earned_points || 0),
-          items: itemsMap[o.id] || []
-        }));
-
-        return res.json(mapped);
-      }
-    }
-  } catch (err: any) {
-    console.warn("[Supabase Fetch Warning] /api/orders:", err?.message || err);
+  const { data: dbOrders, error } = await supabase.from("orders").select("*").order("created_at", { ascending: false });
+  if (error) {
+    console.error("[Supabase Fetch Error] /api/orders:", error);
+    return res.status(500).json({ error: error.message, details: error.details, code: error.code });
   }
 
-  return res.json([]);
+  const { data: dbItems } = await supabase.from("order_items").select("*");
+  const itemsMap: Record<string, any[]> = {};
+  if (dbItems) {
+    dbItems.forEach((item: any) => {
+      if (!itemsMap[item.order_id]) itemsMap[item.order_id] = [];
+      itemsMap[item.order_id].push({
+        product: {
+          id: item.product_id || "custom-prod",
+          name: item.name || "Product",
+          price: Number(item.price),
+          image: "https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=800&q=80",
+          categoryId: "rings",
+          categoryName: "Rings"
+        },
+        quantity: Number(item.quantity || 1),
+        selectedSize: item.size || "Standard",
+        selectedMaterial: item.material || "Gold"
+      });
+    });
+  }
+
+  const mapped = (dbOrders || []).map((o: any) => ({
+    id: o.id,
+    orderNumber: o.order_number || o.id,
+    userEmail: o.email || o.user_id || "customer@vero.com",
+    date: o.created_at,
+    createdAt: o.created_at,
+    total: Number(o.total || 0),
+    status: o.status || "Processing",
+    trackingStatus: o.status || "Order Placed",
+    shippingName: o.shipping_name || "Customer",
+    shippingEmail: o.email || o.user_id || "customer@vero.com",
+    shippingAddress: typeof o.shipping_address === "string" ? o.shipping_address : (o.shipping_address?.address || "Cairo, Egypt"),
+    shippingCity: o.shipping_city || "Cairo",
+    shippingZip: o.shipping_zip || "11511",
+    shippingPhone: o.shipping_phone || "",
+    paymentMethod: o.payment_method || "cash",
+    earnedPoints: Number(o.earned_points || 0),
+    items: itemsMap[o.id] || []
+  }));
+
+  return res.json(mapped);
 });
 
 app.post("/api/orders", async (req: any, res: any) => {
@@ -941,7 +886,7 @@ app.post("/api/orders", async (req: any, res: any) => {
   const userEmail = newOrder.shippingEmail || newOrder.userEmail || req.user?.email || "guest@vero.com";
   const userId = req.user?.userId || userEmail;
 
-  await dbWriteLogAndExecute("orders", "Create Order", req, res, async () => {
+  const orderResult = await dbWriteLogAndExecute("orders", "Create Order", req, res, async () => {
     const supabase = getSupabase()!;
     return await supabase.from("orders").insert([
       {
@@ -969,26 +914,20 @@ app.post("/api/orders", async (req: any, res: any) => {
 
   if (res.headersSent) return;
 
-  // Insert order items safely
+  // Insert order items
   if (newOrder.items && newOrder.items.length > 0) {
-    try {
-      const supabase = getSupabase();
-      if (supabase) {
-        const itemRows = newOrder.items.map((item: any) => ({
-          id: crypto.randomUUID(),
-          order_id: orderId,
-          product_id: item.product?.id || "prod-item",
-          name: item.product?.name || "Luxury Item",
-          price: Number(item.product?.price || 0),
-          quantity: Number(item.quantity || 1),
-          size: item.selectedSize || "Standard",
-          material: item.selectedMaterial || "Gold"
-        }));
-        await supabase.from("order_items").insert(itemRows);
-      }
-    } catch (e) {
-      console.warn("Could not insert order items to Supabase:", e);
-    }
+    const supabase = getSupabase()!;
+    const itemRows = newOrder.items.map((item: any) => ({
+      id: crypto.randomUUID(),
+      order_id: orderId,
+      product_id: item.product?.id || "prod-item",
+      name: item.product?.name || "Luxury Item",
+      price: Number(item.product?.price || 0),
+      quantity: Number(item.quantity || 1),
+      size: item.selectedSize || "Standard",
+      material: item.selectedMaterial || "Gold"
+    }));
+    await supabase.from("order_items").insert(itemRows);
   }
 
   broadcastUpdate();
@@ -1025,65 +964,41 @@ app.delete("/api/orders/:id", requireAdmin, async (req: any, res: any) => {
 
 // REVIEWS ENDPOINTS
 app.get("/api/reviews", async (req, res) => {
-  try {
-    const supabase = getSupabase();
-    if (supabase) {
-      const { data: dbReviews, error } = await supabase.from("reviews").select("*").order("created_at", { ascending: false });
-      if (!error && dbReviews) {
-        let repliesMap: Record<string, any> = {};
-        try {
-          const { data: replies } = await supabase.from("review_replies").select("*");
-          if (replies) {
-            replies.forEach((rep: any) => {
-              repliesMap[rep.review_id] = { author: rep.author_name, comment: rep.comment };
-            });
-          }
-        } catch {
-          // ignore reply fetch error
-        }
+  const supabase = getSupabase();
+  if (!supabase) return res.status(500).json({ error: "Supabase database client is not configured." });
 
-        const mapped = dbReviews.map((r: any) => ({
-          id: r.id,
-          productId: r.product_id,
-          userName: r.user_name || "Customer",
-          userEmail: r.user_email || "",
-          userAvatar: r.user_avatar || "default",
-          rating: Number(r.rating),
-          title: r.title || "",
-          comment: r.comment || "",
-          helpfulCount: Number(r.helpful_count || 0),
-          verifiedPurchase: !!r.verified_purchase,
-          status: r.status || "approved",
-          createdAt: r.created_at,
-          author: r.user_name || "Customer",
-          reply: repliesMap[r.id] || null
-        }));
-
-        return res.json(mapped);
-      }
-    }
-  } catch (err: any) {
-    console.warn("[Supabase Fetch Warning] /api/reviews:", err?.message || err);
+  const { data: dbReviews, error } = await supabase.from("reviews").select("*").order("created_at", { ascending: false });
+  if (error) {
+    console.error("[Supabase Fetch Error] /api/reviews:", error);
+    return res.status(500).json({ error: error.message, details: error.details, code: error.code });
   }
 
-  return res.json([
-    {
-      id: "rev-1",
-      productId: PRODUCTS[0]?.id || "prod-royal-emerald-ring",
-      userName: "Eleanor Vance",
-      userEmail: "eleanor@example.com",
-      userAvatar: "default",
-      rating: 5,
-      title: "Exquisite Craftsmanship",
-      comment: "The emerald cut diamond catches the light beautifully. Superb quality!",
-      helpfulCount: 12,
-      verifiedPurchase: true,
-      status: "approved",
-      createdAt: new Date().toISOString(),
-      author: "Eleanor Vance",
-      reply: null
-    }
-  ]);
+  const { data: replies } = await supabase.from("review_replies").select("*");
+  const repliesMap: Record<string, any> = {};
+  if (replies) {
+    replies.forEach((rep: any) => {
+      repliesMap[rep.review_id] = { author: rep.author_name, comment: rep.comment };
+    });
+  }
+
+  const mapped = (dbReviews || []).map((r: any) => ({
+    id: r.id,
+    productId: r.product_id,
+    userName: r.user_name || "Customer",
+    userEmail: r.user_email || "",
+    userAvatar: r.user_avatar || "default",
+    rating: Number(r.rating),
+    title: r.title || "",
+    comment: r.comment || "",
+    helpfulCount: Number(r.helpful_count || 0),
+    verifiedPurchase: !!r.verified_purchase,
+    status: r.status || "approved",
+    createdAt: r.created_at,
+    author: r.user_name || "Customer",
+    reply: repliesMap[r.id] || null
+  }));
+
+  return res.json(mapped);
 });
 
 app.post("/api/reviews", requireAuth, async (req: any, res: any) => {
@@ -1242,15 +1157,10 @@ app.delete("/api/rewards/:id", requireAdmin, (req, res) => {
 });
 
 // PROMOS & COUPONS ENDPOINTS
-let memoryPromos = [
-  { id: "SAVE10", code: "SAVE10", discountPercent: 10, isActive: true, description: "Save 10% on luxury catalog" },
-  { id: "VERO20", code: "VERO20", discountPercent: 20, isActive: true, description: "20% Exclusive VIP Discount" }
-];
-
 app.get("/api/promos", async (req, res) => {
-  try {
-    const supabase = getSupabase();
-    if (supabase) {
+  const supabase = getSupabase();
+  if (supabase) {
+    try {
       const { data: dbCoupons, error } = await supabase.from("coupons").select("*").order("created_at", { ascending: false });
       if (!error && dbCoupons && dbCoupons.length > 0) {
         const mapped = dbCoupons.map((c: any) => ({
@@ -1260,11 +1170,12 @@ app.get("/api/promos", async (req, res) => {
           isActive: c.active !== false,
           description: `Save ${c.discount_percent}% on luxury catalog`
         }));
+        memoryPromos = mapped;
         return res.json(mapped);
       }
+    } catch (e) {
+      // ignore
     }
-  } catch (err: any) {
-    console.warn("[Supabase Fetch Warning] /api/promos:", err?.message || err);
   }
 
   return res.json(memoryPromos);
@@ -1273,29 +1184,35 @@ app.get("/api/promos", async (req, res) => {
 app.post("/api/promos", requireAdmin, async (req: any, res: any) => {
   const newPromo = req.body;
   const couponId = newPromo.id || `coupon-${Date.now()}`;
-  const promoObj = {
+  const code = (newPromo.code || "SAVE10").toUpperCase();
+  const discountPercent = Number(newPromo.discountPercent || 10);
+
+  const newPromoObj = {
     id: couponId,
-    code: (newPromo.code || "SAVE10").toUpperCase(),
-    discountPercent: Number(newPromo.discountPercent || 10),
+    code,
+    discountPercent,
     isActive: newPromo.isActive !== false,
-    description: `Save ${newPromo.discountPercent || 10}% on luxury catalog`
+    description: `Save ${discountPercent}% on luxury catalog`
   };
 
-  memoryPromos = [promoObj, ...memoryPromos.filter((p) => p.id !== promoObj.id && p.code !== promoObj.code)];
+  memoryPromos = [newPromoObj, ...memoryPromos.filter((p) => p.id !== couponId && p.code !== code)];
 
-  await dbWriteLogAndExecute("coupons", "Create Coupon", req, res, async () => {
-    const supabase = getSupabase()!;
-    return await supabase.from("coupons").upsert([
-      {
-        id: couponId,
-        code: promoObj.code,
-        discount_percent: promoObj.discountPercent,
-        active: promoObj.isActive
-      }
-    ], { onConflict: "id" }).select().single();
-  });
+  const supabase = getSupabase();
+  if (supabase) {
+    try {
+      await supabase.from("coupons").upsert([
+        {
+          id: couponId,
+          code,
+          discount_percent: discountPercent,
+          active: newPromo.isActive !== false
+        }
+      ], { onConflict: "id" });
+    } catch (e) {
+      // ignore
+    }
+  }
 
-  if (res.headersSent) return;
   broadcastUpdate();
   res.json(memoryPromos);
 });
@@ -1305,54 +1222,43 @@ app.delete("/api/promos/:id", requireAdmin, async (req: any, res: any) => {
 
   memoryPromos = memoryPromos.filter((p) => p.id !== promoId && p.code !== promoId);
 
-  await dbWriteLogAndExecute("coupons", "Delete Coupon", req, res, async () => {
-    const supabase = getSupabase()!;
-    return await supabase.from("coupons").delete().eq("id", promoId);
-  });
+  const supabase = getSupabase();
+  if (supabase) {
+    try {
+      await supabase.from("coupons").delete().eq("id", promoId);
+    } catch (e) {
+      // ignore
+    }
+  }
 
-  if (res.headersSent) return;
   broadcastUpdate();
   res.json(memoryPromos);
 });
 
 // USERS MANAGEMENT ENDPOINTS
 app.get("/api/users", requireAdmin, async (req, res) => {
-  try {
-    const supabase = getSupabase();
-    if (supabase) {
-      const { data: dbUsers, error } = await supabase.from("users").select("*").order("created_at", { ascending: false });
-      if (!error && dbUsers) {
-        const mapped = dbUsers.map((u: any) => ({
-          id: u.id,
-          name: u.name,
-          email: u.email,
-          avatar: u.avatar || "default",
-          role: u.role || (isVeroAdminEmail(u.email) ? "admin" : "customer"),
-          tier: u.tier || "Bronze",
-          loyaltyPoints: u.loyalty_points ?? 0,
-          totalSpent: Number(u.total_spent ?? 0),
-          joinedDate: u.created_at ? new Date(u.created_at).toISOString().split("T")[0] : new Date().toISOString().split("T")[0]
-        }));
-        return res.json(mapped);
-      }
-    }
-  } catch (err: any) {
-    console.warn("[Supabase Fetch Warning] /api/users:", err?.message || err);
+  const supabase = getSupabase();
+  if (!supabase) return res.status(500).json({ error: "Supabase database client is not configured." });
+
+  const { data: dbUsers, error } = await supabase.from("users").select("*").order("created_at", { ascending: false });
+  if (error) {
+    console.error("[Supabase Fetch Error] /api/users:", error);
+    return res.status(500).json({ error: error.message, details: error.details, code: error.code });
   }
 
-  return res.json([
-    {
-      id: "usr-admin-1",
-      name: "VERO Executive",
-      email: "vero.boutique.jewelry@gmail.com",
-      avatar: "default",
-      role: "admin",
-      tier: "Platinum",
-      loyaltyPoints: 10000,
-      totalSpent: 250000,
-      joinedDate: new Date().toISOString().split("T")[0]
-    }
-  ]);
+  const mapped = (dbUsers || []).map((u: any) => ({
+    id: u.id,
+    name: u.name,
+    email: u.email,
+    avatar: u.avatar || "default",
+    role: u.role || (isVeroAdminEmail(u.email) ? "admin" : "customer"),
+    tier: u.tier || "Bronze",
+    loyaltyPoints: u.loyalty_points ?? 0,
+    totalSpent: Number(u.total_spent ?? 0),
+    joinedDate: u.created_at ? new Date(u.created_at).toISOString().split("T")[0] : new Date().toISOString().split("T")[0]
+  }));
+
+  return res.json(mapped);
 });
 
 app.post("/api/users", requireAdmin, async (req: any, res: any) => {
@@ -1428,17 +1334,13 @@ app.delete("/api/users/:id", requireAdmin, async (req: any, res: any) => {
 
 // CART ENDPOINTS
 app.get("/api/cart", async (req: any, res: any) => {
-  try {
-    const supabase = getSupabase();
-    if (supabase) {
-      const userEmail = req.query.userEmail || req.user?.email || "guest";
-      const { data, error } = await supabase.from("cart").select("*").eq("user_id", userEmail);
-      if (!error && data) return res.json(data);
-    }
-  } catch (err) {
-    // ignore
-  }
-  return res.json([]);
+  const supabase = getSupabase();
+  if (!supabase) return res.status(500).json({ error: "Supabase database client is not configured." });
+
+  const userEmail = req.query.userEmail || req.user?.email || "guest";
+  const { data, error } = await supabase.from("cart").select("*").eq("user_id", userEmail);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data || []);
 });
 
 app.post("/api/cart", async (req: any, res: any) => {
@@ -1476,17 +1378,13 @@ app.delete("/api/cart/:id", async (req: any, res: any) => {
 
 // WISHLIST ENDPOINTS
 app.get("/api/wishlist", async (req: any, res: any) => {
-  try {
-    const supabase = getSupabase();
-    if (supabase) {
-      const userEmail = req.query.userEmail || req.user?.email || "guest";
-      const { data, error } = await supabase.from("wishlist").select("*").eq("user_id", userEmail);
-      if (!error && data) return res.json(data);
-    }
-  } catch (err) {
-    // ignore
-  }
-  return res.json([]);
+  const supabase = getSupabase();
+  if (!supabase) return res.status(500).json({ error: "Supabase database client is not configured." });
+
+  const userEmail = req.query.userEmail || req.user?.email || "guest";
+  const { data, error } = await supabase.from("wishlist").select("*").eq("user_id", userEmail);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data || []);
 });
 
 app.post("/api/wishlist", async (req: any, res: any) => {
@@ -1521,17 +1419,13 @@ app.delete("/api/wishlist/:id", async (req: any, res: any) => {
 
 // NOTIFICATIONS ENDPOINTS
 app.get("/api/notifications", async (req: any, res: any) => {
-  try {
-    const supabase = getSupabase();
-    if (supabase) {
-      const userEmail = req.query.userEmail || req.user?.email || "guest";
-      const { data, error } = await supabase.from("notifications").select("*").eq("user_id", userEmail).order("created_at", { ascending: false });
-      if (!error && data) return res.json(data);
-    }
-  } catch (err) {
-    // ignore
-  }
-  return res.json([]);
+  const supabase = getSupabase();
+  if (!supabase) return res.status(500).json({ error: "Supabase database client is not configured." });
+
+  const userEmail = req.query.userEmail || req.user?.email || "guest";
+  const { data, error } = await supabase.from("notifications").select("*").eq("user_id", userEmail).order("created_at", { ascending: false });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data || []);
 });
 
 app.put("/api/notifications/:id/read", async (req: any, res: any) => {

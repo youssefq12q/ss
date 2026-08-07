@@ -66,12 +66,16 @@ export default function ProductDetailsPage({
   const [shareToast, setShareToast] = useState<boolean>(false);
   const [sizeGuideOpen, setSizeGuideOpen] = useState<boolean>(false);
 
-  // Combine parent products with fallback fetched products
+  // Combine parent products with fallback fetched products seamlessly
   const allAvailableProducts = useMemo(() => {
-    const combinedMap = new Map<string, Product>();
-    (products || []).forEach((p) => { if (p && p.id) combinedMap.set(p.id, p); });
-    (fetchedProducts || []).forEach((p) => { if (p && p.id && !combinedMap.has(p.id)) combinedMap.set(p.id, p); });
-    return Array.from(combinedMap.values());
+    const map = new Map<string, Product>();
+    if (Array.isArray(products)) {
+      products.forEach((p) => { if (p && p.id) map.set(p.id, p); });
+    }
+    if (Array.isArray(fetchedProducts)) {
+      fetchedProducts.forEach((p) => { if (p && p.id) map.set(p.id, p); });
+    }
+    return Array.from(map.values());
   }, [products, fetchedProducts]);
 
   // Find target product
@@ -80,19 +84,14 @@ export default function ProductDetailsPage({
     return findProductByIdOrSlug(allAvailableProducts, idOrSlug);
   }, [allAvailableProducts, idOrSlug]);
 
-  // If product not found in current memory state, attempt loading directly from server/Supabase
+  // If product not found in current memory state, attempt loading from server/Supabase
   useEffect(() => {
     let isMounted = true;
 
     async function loadProductData() {
-      if (!idOrSlug) {
-        setIsLoading(false);
-        return;
-      }
-
-      // Check if product is already present in allAvailableProducts
-      const localMatch = findProductByIdOrSlug(allAvailableProducts, idOrSlug);
-      if (localMatch) {
+      // If product is already found in memory, stop loading skeleton
+      const existing = findProductByIdOrSlug(allAvailableProducts, idOrSlug || "");
+      if (existing) {
         setIsLoading(false);
         return;
       }
@@ -100,49 +99,31 @@ export default function ProductDetailsPage({
       setIsLoading(true);
 
       try {
-        let single: Product | null = null;
-
-        // 1. Try single API fetch /api/products/:idOrSlug
+        let fetched: Product[] = [];
+        // First try Express API
         try {
-          const res = await safeFetch(`/api/products/${encodeURIComponent(idOrSlug)}`);
+          const res = await safeFetch("/api/products");
           if (res.ok) {
-            single = await res.json();
+            const data = await res.json();
+            if (Array.isArray(data)) {
+              fetched = data;
+            }
           }
         } catch (e) {
           // ignore
         }
 
-        // 2. Try Supabase direct lookup if API didn't return single
-        if (!single) {
-          try {
-            single = await productService.getProductByIdOrSlug(idOrSlug);
-          } catch (e) {
-            // ignore
-          }
-        }
-
-        // 3. Fallback to fetching all products if single endpoint failed
-        if (!single) {
-          let fetched: Product[] = [];
+        // Fall back to Supabase if Express API was empty
+        if ((!fetched || fetched.length === 0) && isMounted) {
           try {
             fetched = await productService.getProducts();
           } catch (e) {
             // ignore
           }
-          if (!fetched || fetched.length === 0) {
-            const res = await safeFetch("/api/products");
-            if (res.ok) {
-              fetched = await res.json();
-            }
-          }
-          if (isMounted && fetched && fetched.length > 0) {
-            setFetchedProducts(fetched);
-          }
-        } else if (isMounted && single) {
-          setFetchedProducts((prev) => {
-            const exists = prev.some((p) => p.id === single!.id);
-            return exists ? prev : [single!, ...prev];
-          });
+        }
+
+        if (isMounted && Array.isArray(fetched) && fetched.length > 0) {
+          setFetchedProducts(fetched);
         }
       } catch (err) {
         console.error("Error fetching single product details:", err);
@@ -158,7 +139,7 @@ export default function ProductDetailsPage({
     return () => {
       isMounted = false;
     };
-  }, [idOrSlug, allAvailableProducts]);
+  }, [idOrSlug]);
 
   // Product interaction state
   const [activeImage, setActiveImage] = useState<string>("");
@@ -174,16 +155,16 @@ export default function ProductDetailsPage({
     shipping: false,
   });
 
-  // Sync image & choices when product loads
+  // Sync image & choices only when navigating to a new product
   useEffect(() => {
     if (product) {
       setActiveImage(product.image);
       setSelectedMaterial(product.materialOptions?.[0] || "#E5D5BC");
       setSelectedSize(product.sizeOptions?.[0] || "Standard");
       setQuantity(1);
-      window.scrollTo({ top: 0, behavior: "smooth" });
     }
-  }, [product]);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [idOrSlug]);
 
   // Handle Share functionality
   const handleShare = async () => {
@@ -294,9 +275,9 @@ export default function ProductDetailsPage({
 
   // Gallery images array
   const allImages = Array.from(new Set([product.image, ...(product.secondaryImages || [])])).filter(Boolean);
-  const ratingData = (productRatingMap && product ? productRatingMap[product.id] : undefined) || { sum: 0, count: 0 };
+  const ratingData = (productRatingMap && product.id && productRatingMap[product.id]) || { sum: 0, count: 0 };
   const avgRating = ratingData.count > 0 ? ratingData.sum / ratingData.count : 5.0;
-  const isFav = product && typeof isFavorited === "function" ? isFavorited(product.id) : false;
+  const isFav = isFavorited && product.id ? isFavorited(product.id) : false;
 
   return (
     <div className="min-h-screen bg-brand-linen pt-28 pb-20">

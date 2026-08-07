@@ -6,72 +6,45 @@ export function slugify(text: string): string {
     .toString()
     .toLowerCase()
     .trim()
-    .replace(/[^\w\s-]/g, "")
+    .replace(/[^\w\s\u0600-\u06FF-]/g, "")
     .replace(/[\s_-]+/g, "-")
     .replace(/^-+|-+$/g, "");
 }
 
 export function getProductIdentifier(product: Product): string {
-  if (!product) return "product";
-  
-  // 1. Prefer explicit stored slug if valid and not a temporary custom- ID
-  if (product.slug && typeof product.slug === "string" && !product.slug.includes("custom-")) {
-    return product.slug;
-  }
-
-  // 2. Use real database ID if it exists and is not a temporary custom- ID
-  if (product.id && typeof product.id === "string" && !product.id.includes("custom-") && !product.id.includes(" ")) {
+  if (!product) return "";
+  if (product.id && !product.id.includes(" ")) {
     return product.id;
   }
-
-  // 3. Fallback to slugified product name if available
-  const nameSlug = slugify(product.name);
-  if (nameSlug) {
-    return nameSlug;
-  }
-
-  // 4. Sanitize legacy custom- IDs if present
-  if (product.id && typeof product.id === "string") {
-    const sanitized = product.id.replace(/^custom-/, "prod-");
-    if (sanitized && !sanitized.includes("custom-")) {
-      return sanitized;
-    }
-  }
-
-  return "product";
+  const slug = slugify(product.name);
+  if (slug) return slug;
+  return product.id || "product";
 }
 
 export function findProductByIdOrSlug(products: Product[], idOrSlug: string): Product | undefined {
-  if (!idOrSlug || !products || products.length === 0) return undefined;
+  if (!idOrSlug || !products || !Array.isArray(products) || products.length === 0) return undefined;
 
-  let rawDecoded = idOrSlug.toLowerCase().trim();
+  let decoded = idOrSlug;
   try {
-    rawDecoded = decodeURIComponent(idOrSlug).toLowerCase().trim();
+    decoded = decodeURIComponent(idOrSlug).toLowerCase().trim();
   } catch (e) {
-    // ignore malformed URI
+    decoded = idOrSlug.toLowerCase().trim();
   }
 
-  const targetSlug = slugify(rawDecoded);
-  const sanitizedInput = rawDecoded.replace(/^custom-/, "prod-");
+  const targetSlug = slugify(decoded);
 
   return products.find((p) => {
     if (!p) return false;
     const pId = p.id ? String(p.id).toLowerCase().trim() : "";
-    const pSlug = p.slug ? String(p.slug).toLowerCase().trim() : "";
+    const pNameRaw = (p.name || "").toLowerCase().trim();
     const pNameSlug = slugify(p.name || "");
-    const sanitizedPId = pId.replace(/^custom-/, "prod-");
 
     return (
-      pId === rawDecoded ||
-      pId === sanitizedInput ||
+      pId === decoded ||
       pId === targetSlug ||
-      pSlug === rawDecoded ||
-      pSlug === sanitizedInput ||
-      pSlug === targetSlug ||
-      pNameSlug === rawDecoded ||
-      pNameSlug === targetSlug ||
-      sanitizedPId === rawDecoded ||
-      sanitizedPId === sanitizedInput
+      pNameRaw === decoded ||
+      (pNameSlug && (pNameSlug === decoded || pNameSlug === targetSlug))
     );
   });
 }
+
