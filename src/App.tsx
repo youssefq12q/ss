@@ -698,12 +698,47 @@ export default function App() {
 
   React.useEffect(() => {
     if (isSupabaseConfigured()) {
-      const { data: { subscription } } = supabase!.auth.onAuthStateChange(async (event, session) => {
+      // 1. Initial active session check against Supabase Auth
+      supabase!.auth.getSession().then(async ({ data: { session } }) => {
         if (session?.user) {
-          const profile = await authService.getProfile(session.user.id);
+          let profile = await authService.getProfile(session.user.id);
+          if (!profile) {
+            profile = await authService.ensureProfile({
+              id: session.user.id,
+              email: session.user.email || "",
+              name: session.user.user_metadata?.name
+            });
+          }
           if (profile) {
-            setUser(profile);
+            setUser({ ...profile, sessionToken: session.access_token });
             localStorage.setItem("vero_user", JSON.stringify(profile));
+            localStorage.setItem("vero_session_token", session.access_token);
+          }
+        } else {
+          // Clear any unverified cached session
+          setUser(null);
+          localStorage.removeItem("vero_user");
+          localStorage.removeItem("vero_session_token");
+        }
+      }).catch((err) => {
+        console.error("Supabase Auth session verification error:", err);
+      });
+
+      // 2. Auth state change subscription
+      const { data: { subscription } } = supabase!.auth.onAuthStateChange(async (event, session) => {
+        if (session?.user && (event === "SIGNED_IN" || event === "INITIAL_SESSION" || event === "TOKEN_REFRESHED")) {
+          let profile = await authService.getProfile(session.user.id);
+          if (!profile) {
+            profile = await authService.ensureProfile({
+              id: session.user.id,
+              email: session.user.email || "",
+              name: session.user.user_metadata?.name
+            });
+          }
+          if (profile) {
+            setUser({ ...profile, sessionToken: session.access_token });
+            localStorage.setItem("vero_user", JSON.stringify(profile));
+            localStorage.setItem("vero_session_token", session.access_token);
             
             // Sync cart & favorites
             const dbCart = await cartService.getCart(session.user.id);
@@ -715,6 +750,10 @@ export default function App() {
               setFavorites(dbWishlist);
             }
           }
+        } else if (event === "SIGNED_OUT" || !session) {
+          setUser(null);
+          localStorage.removeItem("vero_user");
+          localStorage.removeItem("vero_session_token");
         }
       });
 

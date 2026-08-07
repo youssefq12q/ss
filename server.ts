@@ -152,7 +152,7 @@ async function seedSupabaseDatabase() {
       console.log("[Supabase Auto-Seed] Seeding users table...");
       await supabase.from("users").upsert([
         {
-          id: "user-vero-admin",
+          id: "00000000-0000-0000-0000-000000000001",
           email: "vero2026@vero.com",
           name: "VERO Executive Admin",
           role: "admin",
@@ -161,7 +161,7 @@ async function seedSupabaseDatabase() {
           total_spent: 125000
         },
         {
-          id: "user-customer-demo",
+          id: "00000000-0000-0000-0000-000000000002",
           email: "arthurdevelopment101@gmail.com",
           name: "Arthur Collector",
           role: "customer",
@@ -169,7 +169,7 @@ async function seedSupabaseDatabase() {
           loyalty_points: 1250,
           total_spent: 42000
         }
-      ], { onConflict: "id" });
+      ], { onConflict: "email" });
     }
 
     // 5. Reviews
@@ -397,36 +397,49 @@ function sanitizeString(str: string): string {
   return str.replace(/[<>]/g, "").trim();
 }
 
-function requireAuth(req: any, res: any, next: any) {
+async function requireAuth(req: any, res: any, next: any) {
   const authHeader = req.headers.authorization;
-  const customHeader = req.headers["x-session-token"];
+  const customHeader = req.headers["x-session-token"] || req.headers["x-supabase-auth"];
   const token = authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : (customHeader as string);
 
   if (!token) {
-    const userEmail = req.headers["x-user-email"] as string;
-    if (userEmail) {
-      const role = isVeroAdminEmail(userEmail) ? "admin" : "customer";
-      req.user = {
-        userId: userEmail,
-        email: userEmail,
-        role: role,
-        name: userEmail.split("@")[0],
-        token: "header-token",
-        ip: req.socket.remoteAddress || "127.0.0.1"
-      };
-      return next();
+    return res.status(401).json({ error: "Unauthorized: Missing authentication token. Please sign in with Supabase." });
+  }
+
+  const supabase = getSupabase();
+  if (supabase) {
+    try {
+      const { data: { user: authUser }, error } = await supabase.auth.getUser(token);
+      if (authUser && !error) {
+        const { data: profile } = await supabase.from("users").select("*").eq("id", authUser.id).maybeSingle();
+        req.user = {
+          userId: authUser.id,
+          id: authUser.id,
+          email: authUser.email || "",
+          role: profile?.role || (isVeroAdminEmail(authUser.email || "") ? "admin" : "customer"),
+          name: profile?.name || authUser.user_metadata?.name || authUser.email?.split("@")[0],
+          tier: profile?.tier || "Bronze",
+          loyaltyPoints: profile?.loyalty_points ?? 250,
+          totalSpent: Number(profile?.total_spent || 0),
+          avatar: profile?.avatar || "default",
+          token
+        };
+        return next();
+      } else if (error) {
+        console.warn(`[Supabase Auth Session Check Failed] Token: ${token.slice(0, 10)}... | Error: ${error.message}`);
+      }
+    } catch (e: any) {
+      console.warn("[Supabase Auth Session Check Exception]:", e?.message || e);
     }
-    return res.status(401).json({ error: "Unauthorized: Missing authentication token." });
   }
 
   const session = activeSessions.get(token);
-  if (!session || session.expiresAt < Date.now()) {
-    if (session) activeSessions.delete(token);
-    return res.status(401).json({ error: "Unauthorized: Session expired or invalid." });
+  if (session && session.expiresAt > Date.now()) {
+    req.user = session;
+    return next();
   }
 
-  req.user = session;
-  next();
+  return res.status(401).json({ error: "Unauthorized: Session expired or invalid Supabase Auth token." });
 }
 
 function requireAdmin(req: any, res: any, next: any) {
@@ -550,88 +563,242 @@ app.get("/api/updates", (req, res) => {
   });
 });
 
+function formatAuthError(msg: string): string {
+  if (!msg) return "حدث خطأ غير متوقع في المصادقة / An unexpected authentication error occurred.";
+  const lower = msg.toLowerCase();
+  if (lower.includes("rate limit") || lower.includes("rate_limit")) {
+    return "تم تجاوز حد محاولات التسجيل من Supabase مؤقتاً. يرجى الانتظار بضع دقائق قبل المحاولة مجدداً / Email rate limit exceeded on Supabase. Please wait a few minutes before trying again.";
+  }
+  if (lower.includes("invalid login credentials") || lower.includes("invalid_credentials") || lower.includes("invalid password") || lower.includes("wrong password")) {
+    return "بيانات الدخول غير صحيحة. يرجى التأكد من البريد الإلكتروني وكلمة المرور / Invalid login credentials. Please check your email and password.";
+  }
+  if (lower.includes("already registered") || lower.includes("already exists") || lower.includes("user_already_exists")) {
+    return "هذا البريد الإلكتروني مسجل بالفعل. يرجى تسجيل الدخول بدلاً من ذلك / An account with this email already exists. Please sign in.";
+  }
+  if (lower.includes("password should be at least")) {
+    return "يجب أن تكون كلمة المرور 6 أحرف على الأقل / Password must be at least 6 characters long.";
+  }
+  if (lower.includes("email not confirmed") || lower.includes("email_not_confirmed")) {
+    return "يرجى تأكيد البريد الإلكتروني الخاص بك للتمكن من الدخول / Please confirm your email address before signing in.";
+  }
+  return msg;
+}
+
 // AUTH ENDPOINTS
 app.post("/api/auth/login", async (req, res) => {
   const { email, password, rememberMe } = req.body;
-  if (!email || !password) return res.status(400).json({ error: "Email and password are required." });
+  if (!email || !password) return res.status(400).json({ error: "البريد الإلكتروني وكلمة المرور مطلوبان / Email and password are required." });
 
   const cleanEmail = email.trim().toLowerCase();
   const supabase = getSupabase();
-  let user: any = null;
 
-  if (supabase) {
-    const { data: dbUser } = await supabase.from("users").select("*").eq("email", cleanEmail).maybeSingle();
-    if (dbUser) {
-      user = {
-        id: dbUser.id,
-        email: dbUser.email,
-        name: dbUser.name,
-        role: dbUser.role || (isVeroAdminEmail(cleanEmail) ? "admin" : "customer"),
-        tier: dbUser.tier || "Bronze",
-        loyaltyPoints: dbUser.loyalty_points || 0,
-        totalSpent: Number(dbUser.total_spent || 0),
-        avatar: dbUser.avatar || "default"
-      };
-    }
+  if (!supabase) {
+    console.error("[AUTH LOGIN ERROR] Supabase client is not configured.");
+    return res.status(500).json({ error: "Supabase authentication service is not available." });
   }
 
-  if (!user) {
+  console.log(`[SUPABASE AUTH LOGIN ATTEMPT] Email: ${cleanEmail}`);
+
+  // 1. Authenticate exclusively against Supabase Auth
+  const { data: authData, error: authErr } = await supabase.auth.signInWithPassword({
+    email: cleanEmail,
+    password: password
+  });
+
+  if (authErr || !authData.user) {
+    const rawMsg = authErr?.message || "Invalid login credentials";
+    console.warn(`[SUPABASE AUTH LOGIN FAILED] Email: ${cleanEmail} | Error: ${rawMsg}`);
+    return res.status(401).json({
+      error: formatAuthError(rawMsg)
+    });
+  }
+
+  const authUser = authData.user;
+  const session = authData.session;
+
+  // 2. Retrieve public user profile row
+  let dbUser: any = null;
+  const { data: profile } = await supabase.from("users").select("*").eq("id", authUser.id).maybeSingle();
+  if (profile) {
+    dbUser = profile;
+  } else {
+    // Attempt profile creation if missing
     const role = isVeroAdminEmail(cleanEmail) ? "admin" : "customer";
-    user = {
-      id: `user-${Date.now()}`,
+    const name = authUser.user_metadata?.name || cleanEmail.split("@")[0];
+    const newProfile = {
+      id: authUser.id,
       email: cleanEmail,
-      name: cleanEmail.split("@")[0],
+      name: name,
       role: role,
       tier: "Bronze",
-      loyaltyPoints: 250,
-      totalSpent: 0,
+      loyalty_points: 250,
+      total_spent: 0,
       avatar: "default"
     };
+    const { data: created } = await supabase.from("users").upsert([newProfile], { onConflict: "id" }).select().single();
+    dbUser = created || newProfile;
   }
 
-  const session = createSession(user.id, user.email, user.role, user.name, req.socket.remoteAddress || "127.0.0.1", req.headers["user-agent"] || "", !!rememberMe);
-  res.json({ user: { ...user, sessionToken: session.token } });
+  const userRole = dbUser.role || (isVeroAdminEmail(cleanEmail) ? "admin" : "customer");
+  const userName = dbUser.name || authUser.user_metadata?.name || cleanEmail.split("@")[0];
+  const accessToken = session?.access_token || crypto.randomBytes(32).toString("hex");
+
+  if (session) {
+    activeSessions.set(session.access_token, {
+      token: session.access_token,
+      userId: authUser.id,
+      email: cleanEmail,
+      role: userRole,
+      name: userName,
+      createdAt: Date.now(),
+      expiresAt: session.expires_at ? session.expires_at * 1000 : Date.now() + (rememberMe ? 30 * 86400 * 1000 : 86400 * 1000),
+      ip: req.socket.remoteAddress || "127.0.0.1",
+      userAgent: req.headers["user-agent"] || ""
+    });
+  }
+
+  console.log(`[SUPABASE AUTH LOGIN SUCCESS] User ID: ${authUser.id} | Email: ${cleanEmail}`);
+
+  res.json({
+    sessionToken: accessToken,
+    accessToken: session?.access_token,
+    refreshToken: session?.refresh_token,
+    user: {
+      id: authUser.id,
+      name: userName,
+      email: cleanEmail,
+      role: userRole,
+      tier: dbUser.tier || "Bronze",
+      loyaltyPoints: dbUser.loyalty_points ?? 250,
+      totalSpent: Number(dbUser.total_spent || 0),
+      avatar: dbUser.avatar || "default"
+    }
+  });
 });
 
 app.post("/api/auth/register", async (req, res) => {
   const { name, email, password, rememberMe } = req.body;
-  if (!email || !password || !name) return res.status(400).json({ error: "Name, email, and password are required." });
+  if (!email || !password || !name) {
+    return res.status(400).json({ error: "الاسم والبريد الإلكتروني وكلمة المرور مطلوبة / Name, email, and password are required." });
+  }
 
   const cleanEmail = email.trim().toLowerCase();
   const cleanName = sanitizeString(name);
-  const role = isVeroAdminEmail(cleanEmail) ? "admin" : "customer";
-  const userId = `u-${Date.now()}`;
+  const supabase = getSupabase();
 
-  const writeData = await dbWriteLogAndExecute("users", "User Registration", req, res, async () => {
-    const supabase = getSupabase()!;
-    return await supabase.from("users").upsert([
-      {
-        id: userId,
+  if (!supabase) {
+    console.error("[AUTH REGISTER ERROR] Supabase client is not configured.");
+    return res.status(500).json({ error: "Supabase authentication service is not available." });
+  }
+
+  console.log(`[SUPABASE AUTH REGISTER ATTEMPT] Email: ${cleanEmail} | Name: ${cleanName}`);
+
+  // 1. Register exclusively in Supabase Auth (auth.users)
+  let authUser: any = null;
+  let session: any = null;
+  let authErr: any = null;
+
+  // Try admin.createUser first if service role key is present to bypass rate limits / email confirmation
+  try {
+    if (supabase.auth?.admin?.createUser) {
+      const { data: adminData, error: adminErr } = await supabase.auth.admin.createUser({
         email: cleanEmail,
-        name: cleanName,
-        role: role,
-        tier: "Bronze",
-        loyalty_points: 250,
-        total_spent: 0,
-        avatar: "default"
+        password: password,
+        email_confirm: true,
+        user_metadata: { name: cleanName }
+      });
+      if (adminData?.user) {
+        authUser = adminData.user;
+      } else if (adminErr) {
+        console.warn(`[SUPABASE ADMIN CREATE USER NOTICE]: ${adminErr.message}`);
       }
-    ], { onConflict: "email" }).select().single();
-  });
+    }
+  } catch (e: any) {
+    console.warn(`[SUPABASE ADMIN CREATE EXCEPTION]: ${e?.message || e}`);
+  }
 
-  if (res.headersSent) return;
+  // Fallback to standard signUp if admin.createUser was not used or failed
+  if (!authUser) {
+    const { data: authData, error: signUpErr } = await supabase.auth.signUp({
+      email: cleanEmail,
+      password: password,
+      options: {
+        data: { name: cleanName }
+      }
+    });
+    if (authData?.user) {
+      authUser = authData.user;
+      session = authData.session;
+    } else {
+      authErr = signUpErr;
+    }
+  }
 
-  const session = createSession(userId, cleanEmail, role, cleanName, req.socket.remoteAddress || "127.0.0.1", req.headers["user-agent"] || "", !!rememberMe);
+  if (authErr || !authUser) {
+    const rawMsg = authErr?.message || "فشل تسجيل الحساب في Supabase Auth";
+    console.error(`[SUPABASE AUTH REGISTER FAILED] Email: ${cleanEmail} | Error: ${rawMsg}`);
+    return res.status(400).json({
+      error: formatAuthError(rawMsg)
+    });
+  }
+
+  const role = isVeroAdminEmail(cleanEmail) ? "admin" : "customer";
+
+  // 2. Synchronize profile into public.users table with authUser.id
+  const userPayload = {
+    id: authUser.id,
+    email: cleanEmail,
+    name: cleanName,
+    role: role,
+    tier: "Bronze",
+    loyalty_points: 250,
+    total_spent: 0,
+    avatar: "default"
+  };
+
+  const { data: profileData, error: profileErr } = await supabase
+    .from("users")
+    .upsert([userPayload], { onConflict: "id" })
+    .select()
+    .single();
+
+  if (profileErr) {
+    console.warn(`[SUPABASE PROFILE SYNC WARNING]: ${profileErr.message}`);
+  }
+
+  const finalProfile = profileData || userPayload;
+  const accessToken = session?.access_token || crypto.randomBytes(32).toString("hex");
+
+  if (session) {
+    activeSessions.set(session.access_token, {
+      token: session.access_token,
+      userId: authUser.id,
+      email: cleanEmail,
+      role: role,
+      name: cleanName,
+      createdAt: Date.now(),
+      expiresAt: session.expires_at ? session.expires_at * 1000 : Date.now() + 86400 * 1000,
+      ip: req.socket.remoteAddress || "127.0.0.1",
+      userAgent: req.headers["user-agent"] || ""
+    });
+  }
+
+  console.log(`[SUPABASE AUTH REGISTER SUCCESS] Registered in auth.users and synced to public.users! User ID: ${authUser.id}`);
+
   res.json({
+    needsEmailVerification: !session,
+    sessionToken: accessToken,
+    accessToken: session?.access_token,
+    refreshToken: session?.refresh_token,
     user: {
-      id: userId,
+      id: authUser.id,
       name: cleanName,
       email: cleanEmail,
       role: role,
       tier: "Bronze",
       loyaltyPoints: 250,
       totalSpent: 0,
-      avatar: "default",
-      sessionToken: session.token
+      avatar: "default"
     }
   });
 });
@@ -644,6 +811,13 @@ app.post("/api/auth/logout", (req, res) => {
     activeSessions.delete(token);
   }
   res.json({ success: true });
+});
+
+app.get("/api/auth/me", requireAuth, (req: any, res: any) => {
+  if (!req.user) {
+    return res.status(401).json({ error: "Unauthorized: No active Supabase session." });
+  }
+  res.json({ user: req.user });
 });
 
 app.put("/api/auth/profile", async (req: any, res: any) => {

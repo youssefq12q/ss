@@ -39,7 +39,7 @@ export default defineConfig(() => {
   console.log(`[Vite Config] Supabase Key resolved: ${supabaseAnonKey ? "PRESENT (Length " + supabaseAnonKey.length + ")" : "MISSING"}`);
 
   return {
-    base: './',
+    base: '/',
     plugins: [react(), tailwindcss()],
     define: {
       'process.env.VITE_SUPABASE_URL': JSON.stringify(supabaseUrl),

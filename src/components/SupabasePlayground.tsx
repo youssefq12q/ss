@@ -705,10 +705,12 @@ CREATE TABLE IF NOT EXISTS public.product_images (
 
 -- 4. Create users table (public profile mapped to auth.users)
 CREATE TABLE IF NOT EXISTS public.users (
-    id uuid PRIMARY KEY, -- references auth.users(id)
+    id text PRIMARY KEY,
     name text NOT NULL,
-    email text NOT NULL,
+    email text UNIQUE NOT NULL,
     avatar text,
+    phone text,
+    role text DEFAULT 'customer',
     provider text DEFAULT 'email',
     tier text DEFAULT 'Bronze',
     loyalty_points integer DEFAULT 0 NOT NULL,

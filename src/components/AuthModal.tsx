@@ -58,11 +58,67 @@ export default function AuthModal({ isOpen, onClose, onLoginSuccess }: AuthModal
       return;
     }
 
+function formatAuthError(msg: string): string {
+  if (!msg) return "حدث خطأ غير متوقع في المصادقة / An unexpected authentication error occurred.";
+  const lower = msg.toLowerCase();
+  if (lower.includes("rate limit") || lower.includes("rate_limit")) {
+    return "تم تجاوز حد محاولات التسجيل من Supabase مؤقتاً. يرجى الانتظار بضع دقائق قبل المحاولة مجدداً / Email rate limit exceeded on Supabase. Please wait a few minutes before trying again.";
+  }
+  if (lower.includes("invalid login credentials") || lower.includes("invalid_credentials") || lower.includes("invalid password") || lower.includes("wrong password")) {
+    return "بيانات الدخول غير صحيحة. يرجى التأكد من البريد الإلكتروني وكلمة المرور / Invalid login credentials. Please check your email and password.";
+  }
+  if (lower.includes("already registered") || lower.includes("already exists") || lower.includes("user_already_exists")) {
+    return "هذا البريد الإلكتروني مسجل بالفعل. يرجى تسجيل الدخول بدلاً من ذلك / An account with this email already exists. Please sign in.";
+  }
+  if (lower.includes("password should be at least")) {
+    return "يجب أن تكون كلمة المرور 6 أحرف على الأقل / Password must be at least 6 characters long.";
+  }
+  if (lower.includes("email not confirmed") || lower.includes("email_not_confirmed")) {
+    return "يرجى تأكيد البريد الإلكتروني الخاص بك للتمكن من الدخول / Please confirm your email address before signing in.";
+  }
+  return msg;
+}
+
     if (websiteSubMode === "signup") {
       setStep("loading");
       const name = fullNameInput.trim() || trimmedEmail.split("@")[0].charAt(0).toUpperCase() + trimmedEmail.split("@")[0].slice(1);
 
       try {
+        if (isSupabaseConfigured()) {
+          try {
+            const signUpRes = await authService.signUp(trimmedEmail, trimmedPassword, name);
+            if (signUpRes.user) {
+              const profile = await authService.ensureProfile({ id: signUpRes.user.id, email: trimmedEmail, name });
+              const sessionToken = signUpRes.session?.access_token || "";
+              if (sessionToken) {
+                localStorage.setItem("vero_session_token", sessionToken);
+              }
+              const newAccountUser: UserProfile = profile || {
+                name,
+                email: trimmedEmail,
+                avatar: "default",
+                provider: "email",
+                tier: "Bronze",
+                loyaltyPoints: 250,
+                totalSpent: 0,
+                joinedDate: "August 2026",
+                redeemedRewards: [],
+                sessionToken
+              };
+
+              setSuccessName(name);
+              setStep("success");
+              setTimeout(() => {
+                onLoginSuccess(newAccountUser, true);
+                onClose();
+              }, 1200);
+              return;
+            }
+          } catch (clientErr: any) {
+            console.warn("Client Supabase signUp notice, attempting server register endpoint:", clientErr?.message);
+          }
+        }
+
         const res = await fetch("/api/auth/register", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -75,37 +131,30 @@ export default function AuthModal({ isOpen, onClose, onLoginSuccess }: AuthModal
 
         const data = await res.json();
         if (res.ok && data.user) {
-          if (data.sessionToken) {
-            localStorage.setItem("vero_session_token", data.sessionToken);
+          const token = data.sessionToken || data.accessToken;
+          if (token) {
+            localStorage.setItem("vero_session_token", token);
           }
           const newAccountUser: UserProfile = {
             ...data.user,
-            sessionToken: data.sessionToken
+            sessionToken: token
           };
 
-          if (isSupabaseConfigured()) {
-            authService.signUp(trimmedEmail, trimmedPassword, name).catch((err) => {
-              console.warn("Supabase background signup notice:", err?.message);
-            });
-          }
-
           setSuccessName(name);
+          setStep("success");
           setTimeout(() => {
-            setStep("success");
-            setTimeout(() => {
-              onLoginSuccess(newAccountUser, !!data.isFirstLoginWithBonus);
-              onClose();
-            }, 1200);
-          }, 800);
+            onLoginSuccess(newAccountUser, true);
+            onClose();
+          }, 1200);
           return;
         } else {
-          setErrorMessage(data.error || "تعذر إنشاء الحساب / Failed to register account.");
+          setErrorMessage(formatAuthError(data.error || "تعذر إنشاء الحساب في Supabase / Failed to register account in Supabase Auth."));
           setStep("select");
           return;
         }
-      } catch (err) {
+      } catch (err: any) {
         console.error("Auth register error:", err);
-        setErrorMessage("خطأ في الاتصال بالخادم / Connection error.");
+        setErrorMessage(formatAuthError(err?.message || "خطأ في الاتصال أو إنشاء الحساب في Supabase Auth."));
         setStep("select");
         return;
       }
@@ -114,6 +163,31 @@ export default function AuthModal({ isOpen, onClose, onLoginSuccess }: AuthModal
     // Login mode
     setStep("loading");
     try {
+      if (isSupabaseConfigured()) {
+        try {
+          const signInRes = await authService.signIn(trimmedEmail, trimmedPassword);
+          if (signInRes.user && signInRes.session) {
+            const token = signInRes.session.access_token;
+            localStorage.setItem("vero_session_token", token);
+
+            const loggedInUser: UserProfile = {
+              ...signInRes.user,
+              sessionToken: token
+            };
+
+            setSuccessName(loggedInUser.name);
+            setStep("success");
+            setTimeout(() => {
+              onLoginSuccess(loggedInUser, false);
+              onClose();
+            }, 1200);
+            return;
+          }
+        } catch (clientSignInErr: any) {
+          console.warn("Client Supabase signIn notice, attempting server login endpoint:", clientSignInErr?.message);
+        }
+      }
+
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -125,29 +199,30 @@ export default function AuthModal({ isOpen, onClose, onLoginSuccess }: AuthModal
 
       const data = await res.json();
       if (res.ok && data.user) {
-        if (data.sessionToken) {
-          localStorage.setItem("vero_session_token", data.sessionToken);
+        const token = data.sessionToken || data.accessToken;
+        if (token) {
+          localStorage.setItem("vero_session_token", token);
         }
         const loggedInUser: UserProfile = {
           ...data.user,
-          sessionToken: data.sessionToken
+          sessionToken: token
         };
 
         setSuccessName(loggedInUser.name);
         setStep("success");
         setTimeout(() => {
-          onLoginSuccess(loggedInUser, !!data.isFirstLoginWithBonus);
+          onLoginSuccess(loggedInUser, false);
           onClose();
         }, 1200);
         return;
       } else {
-        setErrorMessage(data.error || "البريد الإلكتروني أو كلمة المرور غير صحيحة / Invalid email or password.");
+        setErrorMessage(formatAuthError(data.error || "البريد الإلكتروني أو كلمة المرور غير صحيحة / Invalid email or password."));
         setStep("select");
         return;
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Auth login error:", err);
-      setErrorMessage("خطأ أثناء جلب بيانات الاعتماد / Error connecting to server.");
+      setErrorMessage(formatAuthError(err?.message || "البريد الإلكتروني أو كلمة المرور غير صحيحة / Invalid email or password."));
       setStep("select");
       return;
     }
