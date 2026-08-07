@@ -490,42 +490,6 @@ export default function ProductDetailsPage({
                     )}
                   </div>
                 )}
-
-                {/* Sensory Tagline */}
-                {product.tagline && (
-                  <p className="text-xs md:text-sm text-brand-gold italic font-serif font-light border-r-2 border-brand-gold pr-3 py-0.5 my-4">
-                    {product.tagline}
-                  </p>
-                )}
-
-                {/* Brand Description / وصف المنتج */}
-                {product.description && (
-                  <div className="my-4 p-4 bg-brand-linen/20 rounded-sm border border-brand-outline-variant/20 space-y-1.5 text-right" dir="rtl">
-                    <span className="text-[10px] font-bold text-brand-gold uppercase tracking-wider block text-right">
-                      وصف المنتج / Product Description
-                    </span>
-                    <p className="text-xs md:text-sm text-brand-umber font-light leading-relaxed whitespace-pre-line text-right">
-                      {product.description}
-                    </p>
-                  </div>
-                )}
-
-                {/* Fine Specifications */}
-                {product.details && product.details.length > 0 && (
-                  <div className="my-4 space-y-2">
-                    <span className="text-[10px] font-bold text-brand-umber uppercase tracking-[0.15em] block">
-                      المواصفات والتفاصيل / Fine Specifications
-                    </span>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-brand-outline font-light">
-                      {product.details.map((detail, idx) => (
-                        <div key={idx} className="flex items-center gap-2 bg-white p-2 rounded border border-brand-outline-variant/20">
-                          <span className="w-1.5 h-1.5 rounded-full bg-brand-gold shrink-0"></span>
-                          <span>{detail}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
 
 

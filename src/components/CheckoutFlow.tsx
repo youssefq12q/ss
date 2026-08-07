@@ -110,7 +110,7 @@ export default function CheckoutFlow({
   const [pointsDiscountAmount, setPointsDiscountAmount] = React.useState(0);
 
   const getWhatsAppLink = (orderNumToUse?: string) => {
-    const phone = "201559907692"; // Store WhatsApp phone number
+    const phone = "201559907692"; // Updated store WhatsApp phone number
     const orderNum = orderNumToUse || generatedOrderNumber || "VR-TEMP";
     const discountVal = selectedPointsTier ? Math.round(total * (selectedPointsTier.percentage / 100)) : 0;
     const finalPayable = Math.max(0, total - discountVal);
@@ -134,20 +134,16 @@ export default function CheckoutFlow({
     const orderNum = generatedOrderNumber || ("VR-9830" + Math.floor(Math.random() * 900 + 100));
     setGeneratedOrderNumber(orderNum);
 
+    // Immediately open WhatsApp message to the store number with order details
+    const whatsappUrl = getWhatsAppLink(orderNum);
+    window.open(whatsappUrl, "_blank");
+
     const redeemed = selectedPointsTier ? selectedPointsTier.points : 0;
     const discountVal = selectedPointsTier ? Math.round(total * (selectedPointsTier.percentage / 100)) : 0;
     setUsedPointsAmount(redeemed);
     setPointsDiscountAmount(discountVal);
 
     const finalPayable = Math.max(0, total - discountVal);
-
-    // Open WhatsApp link immediately to the store phone number with pre-filled order text
-    const waUrl = getWhatsAppLink(orderNum);
-    try {
-      window.open(waUrl, "_blank");
-    } catch (e) {
-      console.error("Could not open WhatsApp window:", e);
-    }
 
     let multiplier = 1.0;
     let boostPct = 0;
@@ -866,12 +862,11 @@ export default function CheckoutFlow({
                 </div>
 
                 <button
-                  type="submit"
-                  onClick={(e) => {
-                    e.preventDefault();
+                  type="button"
+                  onClick={() => {
                     handleWhatsAppSubmit();
                   }}
-                  className="w-full bg-[#25D366] hover:bg-[#1ebd54] text-white font-sans text-xs font-semibold uppercase tracking-[0.15em] py-5 transition-all duration-300 shadow-lg flex items-center justify-center gap-2 rounded-sm text-center font-bold cursor-pointer"
+                  className="w-full bg-[#25D366] hover:bg-[#1ebd54] text-white font-sans text-xs font-semibold uppercase tracking-[0.15em] py-5 transition-all duration-300 shadow-lg flex items-center justify-center gap-2 rounded-sm text-center font-bold"
                 >
                   <WhatsAppIcon className="w-4 h-4" />
                   تأكيد الطلب والدفع عبر الواتساب / Complete via WhatsApp

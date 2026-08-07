@@ -778,9 +778,7 @@ app.post("/api/products", requireAdmin, async (req: any, res: any) => {
           images: allImages,
           sizes: newProduct.sizeOptions || ["Standard", "Premium"],
           materials: newProduct.materialOptions || ["#E5D5BC", "#E5E4E2"],
-          description: newProduct.description || "",
-          tagline: newProduct.tagline || "",
-          craftsmanship: newProduct.craftsmanship || ""
+          description: newProduct.description || ""
         }
       ], { onConflict: "id" });
     } catch (e) {
@@ -816,9 +814,7 @@ app.put("/api/products/:id", requireAdmin, async (req: any, res: any) => {
         images: allImages,
         sizes: updated.sizeOptions || [],
         materials: updated.materialOptions || [],
-        description: updated.description || "",
-        tagline: updated.tagline || "",
-        craftsmanship: updated.craftsmanship || ""
+        description: updated.description || ""
       }).eq("id", productId);
     } catch (e) {
       console.warn("Supabase product update notice:", e);
@@ -1024,106 +1020,71 @@ app.delete("/api/orders/:id", requireAdmin, async (req: any, res: any) => {
 });
 
 // REVIEWS ENDPOINTS
-let memoryReviews: any[] = [];
-
 app.get("/api/reviews", async (req, res) => {
   const supabase = getSupabase();
-  if (supabase) {
-    const { data: dbReviews, error } = await supabase.from("reviews").select("*").order("created_at", { ascending: false });
-    if (!error && dbReviews) {
-      const { data: replies } = await supabase.from("review_replies").select("*");
-      const repliesMap: Record<string, any> = {};
-      if (replies) {
-        replies.forEach((rep: any) => {
-          repliesMap[rep.review_id] = { author: rep.author_name, comment: rep.comment };
-        });
-      }
+  if (!supabase) return res.status(500).json({ error: "Supabase database client is not configured." });
 
-      const mapped = dbReviews.map((r: any) => {
-        const text = r.comment || r.review || "";
-        return {
-          id: r.id,
-          productId: r.product_id,
-          userName: r.user_name || "Customer",
-          userEmail: r.user_email || "",
-          userAvatar: r.user_avatar || "default",
-          rating: Number(r.rating || 5),
-          title: r.title || "",
-          comment: text,
-          review: text,
-          helpfulCount: Number(r.helpful_count || 0),
-          verifiedPurchase: !!r.verified_purchase,
-          status: r.status || "approved",
-          createdAt: r.created_at || new Date().toISOString(),
-          author: r.user_name || "Customer",
-          reply: repliesMap[r.id] || null
-        };
-      });
-
-      return res.json(mapped);
-    }
+  const { data: dbReviews, error } = await supabase.from("reviews").select("*").order("created_at", { ascending: false });
+  if (error) {
+    console.error("[Supabase Fetch Error] /api/reviews:", error);
+    return res.status(500).json({ error: error.message, details: error.details, code: error.code });
   }
 
-  // Fallback to memory reviews
-  return res.json(memoryReviews);
+  const { data: replies } = await supabase.from("review_replies").select("*");
+  const repliesMap: Record<string, any> = {};
+  if (replies) {
+    replies.forEach((rep: any) => {
+      repliesMap[rep.review_id] = { author: rep.author_name, comment: rep.comment };
+    });
+  }
+
+  const mapped = (dbReviews || []).map((r: any) => ({
+    id: r.id,
+    productId: r.product_id,
+    userName: r.user_name || "Customer",
+    userEmail: r.user_email || "",
+    userAvatar: r.user_avatar || "default",
+    rating: Number(r.rating),
+    title: r.title || "",
+    comment: r.comment || r.review || "",
+    review: r.review || r.comment || "",
+    helpfulCount: Number(r.helpful_count || 0),
+    verifiedPurchase: !!r.verified_purchase,
+    status: r.status || "approved",
+    createdAt: r.created_at,
+    author: r.user_name || "Customer",
+    reply: repliesMap[r.id] || null
+  }));
+
+  return res.json(mapped);
 });
 
 app.post("/api/reviews", requireAuth, async (req: any, res: any) => {
   const newReview = req.body;
   const reviewId = newReview.id || `rev-${Date.now()}`;
-  const reviewText = newReview.comment || newReview.review || newReview.content || "";
 
-  const savedReview = {
-    id: reviewId,
-    productId: newReview.productId,
-    productName: newReview.productName || "",
-    productImage: newReview.productImage || "",
-    orderId: newReview.orderId || "",
-    userId: newReview.userId || req.user?.email || "anon",
-    userName: newReview.userName || req.user?.name || "Customer",
-    userEmail: newReview.userEmail || req.user?.email || "customer@vero.com",
-    userAvatar: newReview.avatar || "default",
-    rating: Number(newReview.rating || 5),
-    title: newReview.title || "",
-    comment: reviewText,
-    review: reviewText,
-    helpfulCount: 0,
-    verifiedPurchase: !!newReview.verifiedPurchase,
-    recommend: newReview.recommend !== undefined ? Boolean(newReview.recommend) : true,
-    isAnonymous: Boolean(newReview.isAnonymous),
-    images: newReview.images || [],
-    videoUrl: newReview.videoUrl || "",
-    status: "approved",
-    createdAt: new Date().toISOString()
-  };
+  const data = await dbWriteLogAndExecute("reviews", "Create Review", req, res, async () => {
+    const supabase = getSupabase()!;
+    return await supabase.from("reviews").upsert([
+      {
+        id: reviewId,
+        product_id: newReview.productId,
+        user_name: newReview.userName || req.user?.name || "Customer",
+        user_email: newReview.userEmail || req.user?.email || "customer@vero.com",
+        user_avatar: newReview.avatar || "default",
+        rating: Number(newReview.rating),
+        title: newReview.title || "",
+        comment: newReview.comment || newReview.review || newReview.content || "",
+        helpful_count: 0,
+        verified_purchase: !!newReview.verifiedPurchase,
+        status: "approved"
+      }
+    ], { onConflict: "id" }).select().single();
+  });
 
-  memoryReviews = [savedReview, ...memoryReviews.filter(r => r.id !== reviewId)];
-
-  const supabase = getSupabase();
-  if (supabase) {
-    try {
-      await supabase.from("reviews").upsert([
-        {
-          id: reviewId,
-          product_id: newReview.productId,
-          user_name: savedReview.userName,
-          user_email: savedReview.userEmail,
-          user_avatar: savedReview.userAvatar,
-          rating: savedReview.rating,
-          title: savedReview.title,
-          comment: reviewText,
-          helpful_count: 0,
-          verified_purchase: savedReview.verifiedPurchase,
-          status: "approved"
-        }
-      ], { onConflict: "id" });
-    } catch (err) {
-      console.warn("Supabase review upsert warning:", err);
-    }
-  }
-
+  if (res.headersSent) return;
   broadcastUpdate();
-  res.json(savedReview);
+  res.json(data);
 });
 
 app.post("/api/reviews/:id/reply", requireAdmin, async (req: any, res: any) => {
@@ -1147,41 +1108,23 @@ app.post("/api/reviews/:id/reply", requireAdmin, async (req: any, res: any) => {
   res.json(data);
 });
 
-app.put("/api/reviews/:id", requireAuth, async (req: any, res: any) => {
+app.put("/api/reviews/:id", requireAdmin, async (req: any, res: any) => {
   const reviewId = req.params.id;
   const { status, title, comment, review, rating } = req.body;
   const updates: any = {};
-  const text = comment || review;
   if (status) updates.status = status;
   if (title) updates.title = title;
-  if (text) updates.comment = text;
+  if (comment || review) updates.comment = comment || review;
   if (rating !== undefined) updates.rating = Number(rating);
 
-  memoryReviews = memoryReviews.map(r => {
-    if (r.id === reviewId) {
-      return {
-        ...r,
-        title: title || r.title,
-        comment: text || r.comment,
-        review: text || r.review,
-        rating: rating !== undefined ? Number(rating) : r.rating,
-        status: status || r.status
-      };
-    }
-    return r;
+  const data = await dbWriteLogAndExecute("reviews", "Update Review", req, res, async () => {
+    const supabase = getSupabase()!;
+    return await supabase.from("reviews").update(updates).eq("id", reviewId).select().single();
   });
 
-  const supabase = getSupabase();
-  if (supabase) {
-    try {
-      await supabase.from("reviews").update(updates).eq("id", reviewId);
-    } catch (e) {
-      console.warn("Supabase review update notice:", e);
-    }
-  }
-
+  if (res.headersSent) return;
   broadcastUpdate();
-  res.json({ success: true, id: reviewId });
+  res.json(data);
 });
 
 app.post("/api/reviews/:id/helpful", async (req: any, res: any) => {

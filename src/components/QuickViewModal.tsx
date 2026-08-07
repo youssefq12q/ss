@@ -199,7 +199,7 @@ export default function QuickViewModal({
               })()}
 
               {product.stock !== undefined && (
-                <div className="mb-4">
+                <div className="mb-6">
                   {product.stock === 0 ? (
                     <span className="text-xs text-rose-600 font-bold bg-rose-50 border border-rose-200 px-3 py-1.5 rounded uppercase tracking-wider inline-block">
                       غير متوفر حالياً / Out of Stock
@@ -213,25 +213,6 @@ export default function QuickViewModal({
                       الكمية المتبقية: {product.stock} قطع / Only {product.stock} left in stock
                     </span>
                   )}
-                </div>
-              )}
-
-              {/* Tagline */}
-              {product.tagline && (
-                <p className="text-xs text-brand-gold italic font-serif mb-3 border-r-2 border-brand-gold pr-2.5">
-                  {product.tagline}
-                </p>
-              )}
-
-              {/* Brand Description */}
-              {product.description && (
-                <div className="mb-4 p-3 bg-brand-linen/15 rounded border border-brand-outline-variant/20 space-y-1">
-                  <span className="text-[10px] font-bold text-brand-gold uppercase tracking-wider block">
-                    وصف المنتج / Brand Description
-                  </span>
-                  <p className="text-xs text-brand-umber font-light leading-relaxed whitespace-pre-line">
-                    {product.description}
-                  </p>
                 </div>
               )}
 

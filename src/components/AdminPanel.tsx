@@ -656,8 +656,8 @@ export default function AdminPanel({
       pointsEarned: pointsEarned === "" ? undefined : Number(pointsEarned),
       image: imageUrl.trim(),
       secondaryImages: [imageUrl.trim(), ...additionalImages.map((img) => img.trim()).filter(Boolean)],
-      tagline: tagline.trim(),
-      description: description.trim(),
+      tagline: tagline.trim() || `"${name.trim()} by VERO Boutique"`,
+      description: description.trim() || "An authentic quiet luxury piece hand-finished with exceptional Italian craftsmanship.",
       isNew,
       isPreOrder: productType === "preorder",
       materialOptions: materialOptions.split(",").map((s) => s.trim()).filter(Boolean),
@@ -1782,15 +1782,14 @@ export default function AdminPanel({
               <div className="space-y-2 md:col-span-2">
                 <label className="text-xs font-bold text-brand-umber uppercase tracking-wider flex items-center gap-1.5">
                   <AlignLeft className="w-3.5 h-3.5 text-brand-outline" />
-                  <span>وصف المنتج / Product Description</span>
+                  <span>Brand Description</span>
                 </label>
                 <textarea
                   rows={4}
-                  placeholder="أدخل وصف المنتج هنا بالكامل (الخامة، التصميم، المواصفات...) / Enter product description here..."
+                  placeholder="Detail the materials, design philosophy, and fine elements of this accessory..."
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  className="w-full bg-white border border-brand-outline-variant/40 rounded-sm text-xs p-4 outline-none focus:border-brand-gold text-brand-umber font-light leading-relaxed text-right"
-                  dir="auto"
+                  className="w-full bg-white border border-brand-outline-variant/40 rounded-sm text-xs p-4 outline-none focus:border-brand-gold text-brand-umber font-light leading-relaxed"
                 />
               </div>
 
@@ -1839,6 +1838,20 @@ export default function AdminPanel({
                   value={details}
                   onChange={(e) => setDetails(e.target.value)}
                   className="w-full bg-white border border-brand-outline-variant/40 rounded-sm text-xs px-4 py-3 outline-none focus:border-brand-gold text-brand-umber"
+                />
+              </div>
+
+              {/* Craftsmanship */}
+              <div className="space-y-2 md:col-span-2">
+                <label className="text-xs font-bold text-brand-umber uppercase tracking-wider block">
+                  Artisanal Craftsmanship note
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="e.g. Hand-carved inside historic ateliers of Milan by fourth-generation casting master technicians."
+                  value={craftsmanship}
+                  onChange={(e) => setCraftsmanship(e.target.value)}
+                  className="w-full bg-white border border-brand-outline-variant/40 rounded-sm text-xs p-4 outline-none focus:border-brand-gold text-brand-umber font-light"
                 />
               </div>
 
