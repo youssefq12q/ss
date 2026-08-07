@@ -110,12 +110,12 @@ export default function CheckoutFlow({
   const [pointsDiscountAmount, setPointsDiscountAmount] = React.useState(0);
 
   const getWhatsAppLink = (orderNumToUse?: string) => {
-    const phone = "201559907692"; // Updated store WhatsApp phone number
+    const phone = "201559907692"; // Store WhatsApp phone number
     const orderNum = orderNumToUse || generatedOrderNumber || "VR-TEMP";
     const discountVal = selectedPointsTier ? Math.round(total * (selectedPointsTier.percentage / 100)) : 0;
     const finalPayable = Math.max(0, total - discountVal);
     const itemsList = cartItems.map(item => `- ${item.product.name} (${item.selectedSize || "One Size"} / ${item.selectedMaterial || "Platinum"}) x${item.quantity} - EGP ${(item.product.price * item.quantity).toLocaleString()}`).join("\n");
-    const message = `مرحباً بوتيك فيرو VERO Boutique ⚜️\nأود تأكيد طلبي الجديد:\n\nرقم الطلب: ${orderNum}\nالاسم: ${shippingName}\nالبريد الإلكتروني: ${shippingEmail}\nالهاتف: ${shippingPhone}\nالعنوان: ${shippingAddress}، ${shippingCity}، ${shippingZip}\n\nالمنتجات:\n${itemsList}\n\nإجمالي المبلغ المطلوب: EGP ${finalPayable.toLocaleString()}\n\nيرجى تأكيد استلام الطلب. شكراً لكم!`;
+    const message = `أود تأكيد طلبي الجديد:\n\nرقم الطلب: ${orderNum}\nالاسم: ${shippingName}\nالبريد الإلكتروني: ${shippingEmail}\nالهاتف: ${shippingPhone}\nالعنوان: ${shippingAddress}، ${shippingCity}، ${shippingZip}\n\nالمنتجات:\n${itemsList}\n\nإجمالي المبلغ المطلوب: EGP ${finalPayable.toLocaleString()}`;
     return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
   };
 
@@ -140,6 +140,14 @@ export default function CheckoutFlow({
     setPointsDiscountAmount(discountVal);
 
     const finalPayable = Math.max(0, total - discountVal);
+
+    // Open WhatsApp link immediately to the store phone number with pre-filled order text
+    const waUrl = getWhatsAppLink(orderNum);
+    try {
+      window.open(waUrl, "_blank");
+    } catch (e) {
+      console.error("Could not open WhatsApp window:", e);
+    }
 
     let multiplier = 1.0;
     let boostPct = 0;
@@ -857,18 +865,17 @@ export default function CheckoutFlow({
                   </div>
                 </div>
 
-                <a
-                  href={getWhatsAppLink()}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                <button
+                  type="submit"
                   onClick={(e) => {
+                    e.preventDefault();
                     handleWhatsAppSubmit();
                   }}
-                  className="w-full bg-[#25D366] hover:bg-[#1ebd54] text-white font-sans text-xs font-semibold uppercase tracking-[0.15em] py-5 transition-all duration-300 shadow-lg flex items-center justify-center gap-2 rounded-sm text-center font-bold"
+                  className="w-full bg-[#25D366] hover:bg-[#1ebd54] text-white font-sans text-xs font-semibold uppercase tracking-[0.15em] py-5 transition-all duration-300 shadow-lg flex items-center justify-center gap-2 rounded-sm text-center font-bold cursor-pointer"
                 >
                   <WhatsAppIcon className="w-4 h-4" />
                   تأكيد الطلب والدفع عبر الواتساب / Complete via WhatsApp
-                </a>
+                </button>
               </form>
             )}
 

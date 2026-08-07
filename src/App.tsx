@@ -1809,6 +1809,25 @@ export default function App() {
                           )}
                         </div>
                       )}
+
+                      {/* Tagline */}
+                      {selectedProduct.tagline && (
+                        <p className="text-xs md:text-sm text-brand-gold italic font-serif my-3 border-r-2 border-brand-gold pr-3 py-0.5">
+                          {selectedProduct.tagline}
+                        </p>
+                      )}
+
+                      {/* Brand Description / وصف المنتج */}
+                      {selectedProduct.description && (
+                        <div className="my-4 p-4 bg-brand-linen/20 rounded-sm border border-brand-outline-variant/20 space-y-1.5 text-right" dir="rtl">
+                          <span className="text-[10px] font-bold text-brand-gold uppercase tracking-wider block text-right">
+                            وصف المنتج / Product Description
+                          </span>
+                          <p className="text-xs md:text-sm text-brand-umber font-light leading-relaxed whitespace-pre-line text-right">
+                            {selectedProduct.description}
+                          </p>
+                        </div>
+                      )}
                     </div>
 
                     <div className="h-px bg-brand-outline-variant/20 w-full" />
@@ -1945,41 +1964,6 @@ export default function App() {
                               {selectedProduct.details?.map((detail, index) => (
                                 <p key={index}>• {detail}</p>
                               ))}
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
-                      </div>
-
-                      {/* Accordion 2: Craftsmanship */}
-                      <div className="border-b border-brand-outline-variant/20 py-4">
-                        <button
-                          onClick={() =>
-                            setAccordionOpen((prev) => ({
-                              ...prev,
-                              craftsmanship: !prev.craftsmanship,
-                            }))
-                          }
-                          className="w-full flex justify-between items-center text-[10px] font-semibold uppercase tracking-[0.15em] text-brand-umber outline-none"
-                        >
-                          The Craftsmanship
-                          <ChevronRight
-                            className={`w-4 h-4 text-brand-gold transition-transform duration-300 ${
-                              accordionOpen.craftsmanship ? "rotate-90" : ""
-                            }`}
-                          />
-                        </button>
-                        <AnimatePresence>
-                          {accordionOpen.craftsmanship && (
-                            <motion.div
-                              initial={{ opacity: 0, height: 0 }}
-                              animate={{ opacity: 1, height: "auto" }}
-                              exit={{ opacity: 0, height: 0 }}
-                              className="overflow-hidden text-[11px] font-light text-brand-outline leading-relaxed pt-3"
-                            >
-                              <p>
-                                {selectedProduct.craftsmanship ||
-                                  "Each VERO creation is hand-forged by master jewellers utilizing ancient Roman lost-wax casting techniques combined with cutting-edge micro-precision tooling. We dedicate a minimum of 40 focused workshop hours to forge, hand-polish, and authenticate every custom article."}
-                              </p>
                             </motion.div>
                           )}
                         </AnimatePresence>

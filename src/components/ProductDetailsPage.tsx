@@ -500,24 +500,12 @@ export default function ProductDetailsPage({
 
                 {/* Brand Description / وصف المنتج */}
                 {product.description && (
-                  <div className="my-4 p-4 bg-brand-linen/20 rounded border border-brand-outline-variant/20 space-y-1.5">
-                    <span className="text-[10px] font-bold text-brand-gold uppercase tracking-wider block">
-                      وصف المنتج / Brand Description
+                  <div className="my-4 p-4 bg-brand-linen/20 rounded-sm border border-brand-outline-variant/20 space-y-1.5 text-right" dir="rtl">
+                    <span className="text-[10px] font-bold text-brand-gold uppercase tracking-wider block text-right">
+                      وصف المنتج / Product Description
                     </span>
-                    <p className="text-xs text-brand-umber font-light leading-relaxed whitespace-pre-line">
+                    <p className="text-xs md:text-sm text-brand-umber font-light leading-relaxed whitespace-pre-line text-right">
                       {product.description}
-                    </p>
-                  </div>
-                )}
-
-                {/* Artisanal Craftsmanship Note */}
-                {product.craftsmanship && (
-                  <div className="my-3 p-3.5 bg-amber-50/50 rounded border border-amber-200/60 space-y-1">
-                    <span className="text-[10px] font-bold text-amber-900 uppercase tracking-wider block">
-                      الصياغة اليدوية / Artisanal Craftsmanship
-                    </span>
-                    <p className="text-xs text-brand-umber/90 font-light leading-relaxed">
-                      {product.craftsmanship}
                     </p>
                   </div>
                 )}
