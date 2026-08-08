@@ -68,87 +68,52 @@ export function mapLocalProductToDb(product: Product): any {
 // ==========================================
 
 export const authService = {
-  async ensureProfile(user: { id: string; email: string; name?: string }): Promise<UserProfile | null> {
-    if (!supabase) return null;
-    const existing = await this.getProfile(user.id);
-    if (existing) return existing;
-
-    const cleanEmail = user.email.trim().toLowerCase();
-    const name = user.name || cleanEmail.split("@")[0];
-    const role = (cleanEmail === "vero2026@vero.com" || cleanEmail.endsWith("@vero.com")) ? "admin" : "customer";
-
-    const payload = {
-      id: user.id,
-      email: cleanEmail,
-      name: name,
-      role: role,
-      tier: "Bronze",
-      loyalty_points: 250,
-      total_spent: 0,
-      avatar: "default"
-    };
-
-    const { error } = await supabase.from("users").upsert([payload], { onConflict: "id" });
-    if (error) {
-      console.warn("[ensureProfile Notice]:", error.message);
-    }
-    return this.getProfile(user.id);
-  },
-
   async signUp(email: string, pass: string, name: string) {
     if (!supabase) throw new Error("Supabase is not configured.");
     
-    const cleanEmail = email.trim().toLowerCase();
-    const cleanName = name.trim();
-
     const { data, error } = await supabase.auth.signUp({
-      email: cleanEmail,
+      email,
       password: pass,
       options: {
         data: {
-          name: cleanName,
-          avatar_url: `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(cleanName)}`
+          name: name,
+          avatar_url: `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(name)}`
         }
       }
     });
 
-    if (error) {
-      console.error("[Supabase Auth SignUp Error]:", error.message);
-      throw error;
-    }
-
-    if (data.user) {
-      await this.ensureProfile({ id: data.user.id, email: cleanEmail, name: cleanName });
-    }
-
+    if (error) throw error;
     return data;
   },
 
   async signIn(email: string, pass: string) {
     if (!supabase) throw new Error("Supabase is not configured.");
     
-    const cleanEmail = email.trim().toLowerCase();
-
     const { data, error } = await supabase.auth.signInWithPassword({
-      email: cleanEmail,
+      email,
       password: pass
     });
 
-    if (error) {
-      console.error("[Supabase Auth SignIn Error]:", error.message);
-      throw error;
-    }
+    if (error) throw error;
 
+    // Fetch the public profile associated with this user
     if (data.user) {
-      let profile = await this.getProfile(data.user.id);
-      if (!profile) {
-        profile = await this.ensureProfile({
-          id: data.user.id,
-          email: cleanEmail,
-          name: data.user.user_metadata?.name
-        });
+      const profile = await this.getProfile(data.user.id);
+      if (profile) {
+        return { session: data.session, user: profile };
       }
-      return { session: data.session, user: profile };
+      const fallbackUser: UserProfile = {
+        name: data.user.user_metadata?.name || data.user.email?.split("@")[0] || "VERO Collector",
+        email: data.user.email || email,
+        avatar: data.user.user_metadata?.avatar_url || "default",
+        provider: "email",
+        tier: "Bronze",
+        loyaltyPoints: 0,
+        totalSpent: 0,
+        joinedDate: "July 2026",
+        redeemedRewards: []
+      };
+      return { session: data.session, user: fallbackUser };
     }
 
     return { session: data.session, user: null };

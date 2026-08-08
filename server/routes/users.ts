@@ -41,19 +41,60 @@ router.get("/", requireAdmin, async (req: Request, res: Response) => {
 // POST /api/users (Admin only)
 router.post("/", requireAdmin, async (req: Request, res: Response) => {
   const newUser = req.body;
-  if (!newUser.id) {
-    newUser.id = `user-${Date.now()}`;
+  if (!newUser.email) {
+    return res.status(400).json({ error: "Email is required." });
   }
 
+  const cleanEmail = newUser.email.trim().toLowerCase();
   const supabase = getSupabaseAdmin();
   if (!supabase) return res.status(503).json({ error: "Supabase unavailable." });
+
+  let authUserId: string | null = newUser.id && newUser.id.length > 20 ? newUser.id : null;
+  let authErrorMsg: string | null = null;
+
+  if (!authUserId) {
+    try {
+      if (supabase.auth?.admin?.createUser) {
+        const { data: authAdminData, error: authAdminErr } = await supabase.auth.admin.createUser({
+          email: cleanEmail,
+          password: newUser.password || "VeroDefault2026!",
+          email_confirm: true,
+          user_metadata: { name: newUser.name || cleanEmail.split("@")[0] }
+        });
+        if (authAdminData?.user?.id) {
+          authUserId = authAdminData.user.id;
+        } else if (authAdminErr) {
+          authErrorMsg = authAdminErr.message;
+        }
+      }
+
+      if (!authUserId) {
+        const { data: authData, error: authErr } = await supabase.auth.signUp({
+          email: cleanEmail,
+          password: newUser.password || "VeroDefault2026!",
+          options: { data: { name: newUser.name || cleanEmail.split("@")[0] } }
+        });
+        if (authData?.user?.id) {
+          authUserId = authData.user.id;
+        } else if (authErr) {
+          authErrorMsg = authErr.message;
+        }
+      }
+    } catch (e: any) {
+      authErrorMsg = e?.message || "Failed to create user in Supabase Authentication.";
+    }
+  }
+
+  if (!authUserId) {
+    return res.status(400).json({ error: authErrorMsg || "Cannot create user without Supabase Authentication account." });
+  }
 
   try {
     const { data, error } = await supabase
       .from("users")
       .upsert([{
-        id: newUser.id,
-        email: newUser.email,
+        id: authUserId,
+        email: cleanEmail,
         name: newUser.name,
         role: newUser.role || "customer",
         tier: newUser.tier || "Bronze",
@@ -61,14 +102,14 @@ router.post("/", requireAdmin, async (req: Request, res: Response) => {
         total_spent: newUser.totalSpent || 0,
         joined_date: newUser.joinedDate || new Date().toISOString(),
         avatar: newUser.avatar || "default",
-      }])
+      }], { onConflict: "id" })
       .select()
       .single();
 
     if (error) throw error;
 
     if (req.user) {
-      await logAuditEvent(req.user.userId, req.user.email, "Update User Account", newUser.email, `Updated role: ${newUser.role || 'customer'}`);
+      await logAuditEvent(req.user.userId, req.user.email, "Update User Account", cleanEmail, `Updated role: ${newUser.role || 'customer'}`);
     }
 
     const { data: updatedUsers } = await supabase.from("users").select("*");

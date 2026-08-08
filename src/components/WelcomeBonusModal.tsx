@@ -47,20 +47,20 @@ export default function WelcomeBonusModal({
           {/* Header Badge */}
           <div className="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-[#c5a880]/15 border border-[#c5a880]/30 text-[#8c6d46] text-[11px] font-bold uppercase tracking-widest">
             <Gift className="w-3.5 h-3.5 text-[#c5a880]" />
-            <span>VERO Welcome Bonus</span>
+            <span>هدية الترحيب • VERO Welcome Bonus</span>
           </div>
 
           {/* Welcome Text */}
           <div className="space-y-1.5">
             <h2 className="font-serif text-2xl md:text-3xl font-bold tracking-wide text-[#1a130f] flex items-center justify-center gap-2">
-              <span>Welcome to VERO</span>
+              <span>مرحباً بك في VERO</span>
               <Sparkles className="w-5 h-5 text-[#c5a880] animate-pulse" />
             </h2>
             <p className="text-xs text-gray-600 font-medium leading-relaxed max-w-[320px] mx-auto">
-              Thank you for joining the VERO family{userName ? `, ${userName}` : ""}.
+              شكراً لأنضمامك لعائلة VERO المميزة{userName ? `، ${userName}` : ""}.
             </p>
             <p className="text-xs font-semibold text-[#8c6d46]">
-              You’ve received <span className="font-bold text-[#2c221e]">{pointsAwarded} VERO Points</span> as a welcome gift!
+              حصلت على <span className="font-bold text-[#2c221e]">{pointsAwarded} نقطة مكافأة VERO</span> كهدية انضمام!
             </p>
           </div>
 
@@ -74,34 +74,34 @@ export default function WelcomeBonusModal({
             <div className="absolute -right-6 -bottom-6 w-24 h-24 bg-[#c5a880]/10 rounded-full blur-xl pointer-events-none" />
             
             <span className="text-[10px] uppercase tracking-[0.25em] text-[#c5a880] font-bold block">
-              Your Reward
+              رصيد المكافأة الخاصة بك / Your Reward
             </span>
             
             <div className="flex items-center justify-center gap-2 text-2xl md:text-3xl font-extrabold text-[#e2c799] tracking-wider font-serif">
-              <span>+{pointsAwarded} Points</span>
+              <span>+{pointsAwarded} نقطة / PTS</span>
               <span className="text-[10px] font-normal font-sans bg-[#c5a880]/20 text-[#e2c799] px-2 py-0.5 rounded-full border border-[#c5a880]/30">
-                Valid 30 Days
+                مفعلة مباشرة
               </span>
             </div>
 
             <p className="text-[11px] text-gray-300 font-medium">
-              Ready to use on your next order
+              جاهزة للاستخدام للخصم على طلبك القادم
             </p>
           </motion.div>
 
           {/* Features Checklist */}
-          <div className="bg-white/70 border border-[#c5a880]/20 rounded-xl p-4 text-left text-xs space-y-2.5 shadow-sm">
+          <div className="bg-white/70 border border-[#c5a880]/20 rounded-xl p-4 text-right text-xs space-y-2.5 shadow-sm" dir="rtl">
             <div className="flex items-center gap-2.5 text-gray-700 font-medium">
               <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-              <span>Use your points on your next order</span>
+              <span>استخدم نقاطك للخصم الفوري على مشترياتك القادمة</span>
             </div>
             <div className="flex items-center gap-2.5 text-gray-700 font-medium">
               <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-              <span>Unlock Silver tier faster</span>
+              <span>الوصول بشكل أسرع إلى المستوى الفضي (Silver Tier)</span>
             </div>
             <div className="flex items-center gap-2.5 text-gray-700 font-medium">
               <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-              <span>Get exclusive member-only offers</span>
+              <span>عروض وتخفيضات حصرية مخصصة لأعضاء VERO</span>
             </div>
           </div>
 

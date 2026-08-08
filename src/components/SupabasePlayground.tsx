@@ -266,8 +266,6 @@ export default function SupabasePlayground() {
 
     setIsActionLoading(true);
     try {
-      const uniqueUserId = crypto.randomUUID();
-      const uniqueOrderId = "ord_" + Math.random().toString(36).substring(2, 11);
       const firstNames = ["Alistair", "Genevieve", "Reginald", "Evelyn", "Julian", "Beatrix", "Sienna", "Maximilian"];
       const lastNames = ["Vance", "Thorne", "Sterling", "Montague", "Duval", "Lockwood", "Rothschild"];
       const cities = ["Paris", "London", "Milan", "Tokyo", "New York", "Geneva", "Beverly Hills"];
@@ -276,25 +274,45 @@ export default function SupabasePlayground() {
       const randomCity = cities[Math.floor(Math.random() * cities.length)];
       const randomSpent = [850, 1200, 1800, 2500, 3500, 4800, 5500, 6500][Math.floor(Math.random() * 8)];
       const randomPoints = Math.floor(randomSpent * 0.1);
+      const userEmail = randomName.toLowerCase().replace(" ", ".") + "@luxury-vero.com";
+      const uniqueOrderId = "ord_" + Math.random().toString(36).substring(2, 11);
 
-      // 1. Create client profile
-      const { error: userErr } = await supabase.from("users").insert({
-        id: uniqueUserId,
+      // 1. Create user in Supabase Authentication (auth.users)
+      let activeAuthId: string | null = null;
+      const { data: authData, error: authErr } = await supabase.auth.signUp({
+        email: userEmail,
+        password: "VeroTestUser2026!",
+        options: {
+          data: { name: randomName }
+        }
+      });
+
+      if (authData?.user?.id) {
+        activeAuthId = authData.user.id;
+      }
+
+      if (!activeAuthId) {
+        throw new Error(`Failed to create account in Supabase Authentication: ${authErr?.message || "Auth user creation failed."}`);
+      }
+
+      // 2. Insert profile record in public.users using activeAuthId (matching auth.users.id)
+      const { error: userErr } = await supabase.from("users").upsert({
+        id: activeAuthId,
         name: randomName,
-        email: randomName.toLowerCase().replace(" ", ".") + "@luxury-vero.com",
-        avatar: `https://api.dicebear.com/7.x/adventurer/svg?seed=${uniqueUserId}`,
+        email: userEmail,
+        avatar: `https://api.dicebear.com/7.x/adventurer/svg?seed=${activeAuthId}`,
         tier: randomSpent >= 4000 ? "Platinum" : randomSpent >= 2000 ? "Gold" : "Silver",
         loyalty_points: randomPoints,
         total_spent: randomSpent,
         joined_date: new Date().toISOString().split("T")[0]
-      });
+      }, { onConflict: "id" });
       if (userErr) throw userErr;
 
-      // 2. Create order
+      // 3. Create order
       const { error: orderErr } = await supabase.from("orders").insert({
         id: uniqueOrderId,
         order_number: "VR-" + Math.floor(100000 + Math.random() * 900000),
-        user_id: uniqueUserId,
+        user_id: activeAuthId,
         email: randomName.toLowerCase().replace(" ", ".") + "@luxury-vero.com",
         shipping_name: randomName,
         shipping_address: "742 Avenue de l'Opéra",

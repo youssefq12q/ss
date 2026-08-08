@@ -417,6 +417,34 @@ BEGIN
   END IF;
 END $$;
 
+-- Automatically create profile in public.users when a user is created in auth.users
+CREATE OR REPLACE FUNCTION public.handle_new_user() 
+RETURNS trigger AS $$
+BEGIN
+  INSERT INTO public.users (id, name, email, avatar, role, tier, loyalty_points, total_spent, joined_date)
+  VALUES (
+    new.id,
+    coalesce(new.raw_user_meta_data->>'name', split_part(new.email, '@', 1)),
+    new.email,
+    coalesce(new.raw_user_meta_data->>'avatar_url', 'default'),
+    'customer',
+    'Bronze',
+    0,
+    0.0,
+    to_char(now(), 'YYYY-MM-DD')
+  )
+  ON CONFLICT (id) DO UPDATE SET
+    email = EXCLUDED.email,
+    name = COALESCE(public.users.name, EXCLUDED.name);
+  RETURN new;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
 -- -----------------------------------------------------------------------------
 -- 17. ROW LEVEL SECURITY (RLS) POLICIES
 -- -----------------------------------------------------------------------------
