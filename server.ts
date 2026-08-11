@@ -724,30 +724,34 @@ app.post("/api/auth/login", async (req, res) => {
     } catch (e: any) {
       console.warn("[Supabase Auth Login Exception]:", e?.message);
     }
+  } else {
+    // Demo Mode (Without Supabase) - Validate against default credentials
+    const isSeedAdmin = cleanEmail === "vero2026@vero.com" || cleanEmail === "admin@vero.com";
+    const isSeedCustomer = cleanEmail === "arthurdevelopment101@gmail.com" || cleanEmail === "customer@vero.com";
+    const validPassword = isSeedAdmin ? "VeroAdmin2026!" : "VeroCustomer2026!";
 
-    // 2. Fallback DB lookup if auth service is in admin mode or direct DB user match
-    if (!user) {
-      const { data: dbUser } = await supabase.from("users").select("*").eq("email", cleanEmail).maybeSingle();
-      if (dbUser) {
-        user = {
-          id: dbUser.id,
-          email: dbUser.email,
-          name: dbUser.name,
-          role: dbUser.role || (isVeroAdminEmail(cleanEmail) ? "admin" : "customer"),
-          tier: dbUser.tier || "Bronze",
-          loyaltyPoints: dbUser.loyalty_points ?? 250,
-          totalSpent: Number(dbUser.total_spent || 0),
-          avatar: dbUser.avatar || "default"
-        };
-      }
+    if ((isSeedAdmin || isSeedCustomer) && password === validPassword) {
+      const role = isSeedAdmin ? "admin" : "customer";
+      user = {
+        id: `demo-${cleanEmail}`,
+        email: cleanEmail,
+        name: cleanEmail.split("@")[0],
+        role: role,
+        tier: "Bronze",
+        loyaltyPoints: 250,
+        totalSpent: 0,
+        avatar: "default"
+      };
+    } else {
+      authFailedReason = "Invalid credentials in demo mode";
     }
   }
 
-  // STRICT RULE: If account does not exist or credentials fail, DO NOT auto-create an account!
+  // STRICT RULE: If account does not exist or credentials fail, DO NOT log in!
   if (!user) {
     logAuditEvent("guest", cleanEmail, "Failed Login Attempt", "Auth System", `Invalid credentials or unregistered account: ${authFailedReason || "Account not found"}`, req.socket.remoteAddress || "127.0.0.1");
     return res.status(401).json({
-      error: "الحساب غير موجود أو كلمة المرور غير صحيحة. يرجى إنشاء حساب جديد أولاً. / Account does not exist or invalid password. Please register a new account first."
+      error: "البريد الإلكتروني أو كلمة المرور غير صحيحة. يرجى التأكد من كلمة المرور أو إنشاء حساب جديد. / Invalid email or password."
     });
   }
 
