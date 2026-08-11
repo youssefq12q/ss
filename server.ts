@@ -1392,16 +1392,52 @@ app.post("/api/reviews/:id/report", async (req: any, res: any) => {
 
 app.delete("/api/reviews/:id", requireAuth, async (req: any, res: any) => {
   const reviewId = req.params.id;
+  const user = req.user;
+  const supabase = getSupabase();
+
+  if (supabase) {
+    const { data: targetReview } = await supabase.from("reviews").select("*").eq("id", reviewId).maybeSingle();
+    if (targetReview) {
+      const isAdmin = user?.role === "admin";
+      const isOwner = user && (
+        targetReview.user_id === user.userId ||
+        targetReview.user_id === user.email ||
+        (user.email && targetReview.user_email?.toLowerCase() === user.email.toLowerCase())
+      );
+
+      if (!isAdmin && !isOwner) {
+        return res.status(403).json({
+          error: "عفواً، لا يمكنك حذف هذا التقييم. يُسمح فقط لصاحب التقييم أو أدمن النظام بحذفه. / Forbidden: Only the review author or an admin can delete this review."
+        });
+      }
+    }
+  }
 
   await dbWriteLogAndExecute("reviews", "Delete Review", req, res, async () => {
-    const supabase = getSupabase()!;
-    await supabase.from("review_replies").delete().eq("review_id", reviewId);
-    return await supabase.from("reviews").delete().eq("id", reviewId);
+    const sb = getSupabase()!;
+    await sb.from("review_images").delete().eq("review_id", reviewId);
+    await sb.from("review_votes").delete().eq("review_id", reviewId);
+    await sb.from("review_reports").delete().eq("review_id", reviewId);
+    await sb.from("review_replies").delete().eq("review_id", reviewId);
+    return await sb.from("reviews").delete().eq("id", reviewId);
   });
 
   if (res.headersSent) return;
   broadcastUpdate();
   res.json({ success: true, deletedId: reviewId });
+});
+
+app.delete("/api/reviews/:id/reply", requireAdmin, async (req: any, res: any) => {
+  const reviewId = req.params.id;
+
+  await dbWriteLogAndExecute("review_replies", "Delete Review Reply", req, res, async () => {
+    const sb = getSupabase()!;
+    return await sb.from("review_replies").delete().eq("review_id", reviewId);
+  });
+
+  if (res.headersSent) return;
+  broadcastUpdate();
+  res.json({ success: true, reviewId });
 });
 
 // REWARDS ENDPOINTS

@@ -681,7 +681,12 @@ export default function ProductReviewsSection({
       <div className="space-y-6">
         {sortedReviews.length > 0 ? (
           sortedReviews.map((rev) => {
-            const isUserOwner = user && (rev.userId === user.email || rev.userEmail === user.email);
+            const isUserOwner = !!user && (
+              rev.userId === user.id ||
+              rev.userId === user.email ||
+              (!!user.email && rev.userEmail?.toLowerCase() === user.email.toLowerCase())
+            );
+            const canDelete = isUserOwner || isAdmin;
             const hasVotedHelpful = user && rev.votedUserIds?.includes(user.email);
 
             return (
@@ -787,15 +792,17 @@ export default function ProductReviewsSection({
                           {new Date(rev.reply.createdAt).toLocaleDateString("ar-EG")}
                         </span>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteReply(rev.id)}
-                        className="text-rose-600 hover:bg-rose-100 p-1 px-2 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-colors cursor-pointer"
-                        title="حذف الرد الرسمي"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        <span>حذف الرد</span>
-                      </button>
+                      {isAdmin && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteReply(rev.id)}
+                          className="text-rose-600 hover:bg-rose-100 p-1 px-2 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                          title="حذف الرد الرسمي"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>حذف الرد</span>
+                        </button>
+                      )}
                     </div>
                     <p className="text-xs text-[#1f1915]/80 leading-relaxed font-serif pr-2">
                       {rev.reply.reply}
@@ -842,15 +849,17 @@ export default function ProductReviewsSection({
                       </button>
                     )}
 
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteReview(rev.id)}
-                      className="text-rose-600 hover:text-rose-800 hover:bg-rose-50 px-2.5 py-1 rounded-lg font-bold text-xs inline-flex items-center gap-1 cursor-pointer transition-all border border-rose-200/50 shadow-2xs"
-                      title="حذف هذا الكومنت / التقييم نهائياً"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      <span>حذف الكومنت</span>
-                    </button>
+                    {canDelete && (
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteReview(rev.id)}
+                        className="text-rose-600 hover:text-rose-800 hover:bg-rose-50 px-2.5 py-1 rounded-lg font-bold text-xs inline-flex items-center gap-1 cursor-pointer transition-all border border-rose-200/50 shadow-2xs"
+                        title="حذف هذا الكومنت / التقييم نهائياً"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>حذف الكومنت</span>
+                      </button>
+                    )}
                   </div>
                 </div>
 
